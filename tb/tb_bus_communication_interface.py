@@ -37,29 +37,29 @@ class InterfaceController:
         return await self.recv_queue.get()
 
     async def start(self):
-        self.dut.postoffice_interface_valid.value = 0
+        self.dut.loopback_interface_valid.value = 0
         while True:
             await RisingEdge()
 
-            if self.dut.postoffice_interface_valid.value == 1:
-                self.dut.postoffice_interface_valid.value = not self.dut.interface_postoffice_ready.value
+            if self.dut.loopback_interface_valid.value == 1:
+                self.dut.loopback_interface_valid.value = not self.dut.interface_loopback_ready.value
 
-            if self.dut.postoffice_interface_valid.value == 0 and not self.send_queue.empty():
+            if self.dut.loopback_interface_valid.value == 0 and not self.send_queue.empty():
                 [destination, tag, message] = self.send_queue.get_nowait()
-                self.dut.postoffice_interface_valid.value = 1
-                self.dut.postoffice_interface_data.message.meta.address.value = destination
-                self.dut.postoffice_interface_data.message.meta.tag.value = tag
-                self.dut.postoffice_interface_data.message.data.value = message
+                self.dut.loopback_interface_valid.value = 1
+                self.dut.loopback_interface_data.message.meta.address.value = destination
+                self.dut.loopback_interface_data.message.meta.tag.value = tag
+                self.dut.loopback_interface_data.message.data.value = message
                 self.dut._log.info(f"Sent: [{destination=}, {tag=}, {message=}]")
 
-            if self.dut.interface_mailbox_valid.value and not self.recv_queue.full():
-                source = int(self.dut.interface_mailbox_data.message.meta.address.value)
-                tag = int(self.dut.interface_mailbox_data.message.meta.tag.value)
-                message = int(self.dut.interface_mailbox_data.message.data.value)
+            if self.dut.interface_loopback_valid.value and not self.recv_queue.full():
+                source = int(self.dut.interface_loopback_data.message.meta.address.value)
+                tag = int(self.dut.interface_loopback_data.message.meta.tag.value)
+                message = int(self.dut.interface_loopback_data.message.data.value)
                 self.recv_queue.put_nowait([source, tag, message])
                 self.dut._log.info(f"Received: [{source=}, {tag=}, {message=}]")
 
-            self.dut.mailbox_interface_ready.value = not self.recv_queue.full()
+            self.dut.loopback_interface_ready.value = not self.recv_queue.full()
 
 async def setup(dut):
     bus = SingleBusEmulator(dut)

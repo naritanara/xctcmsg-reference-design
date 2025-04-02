@@ -21,17 +21,17 @@ class CommunicationInterfaceEmulator:
             await RisingEdge()
             await SimulationUpdate()
 
-            self.dut.interface_mailbox_valid.value = 0
+            self.dut.loopback_mailbox_valid.value = 0
 
-            if (self.dut.mailbox_interface_ready.value == 0):
+            if (self.dut.mailbox_loopback_ready.value == 0):
                 continue
 
             if (not self.receive_queue.empty()):
                 [source, tag, message] = self.receive_queue.get_nowait()
-                self.dut.interface_mailbox_valid.value = 1
-                self.dut.interface_mailbox_data.message.meta.address.value = source
-                self.dut.interface_mailbox_data.message.meta.tag.value = tag
-                self.dut.interface_mailbox_data.message.data.value = message
+                self.dut.loopback_mailbox_valid.value = 1
+                self.dut.loopback_mailbox_data.message.meta.address.value = source
+                self.dut.loopback_mailbox_data.message.meta.tag.value = tag
+                self.dut.loopback_mailbox_data.message.data.value = message
                 self.dut._log.info(f"Received: [{source=}, {tag=}, {message=}]")
 
 class PipelineEmulator:
@@ -87,7 +87,7 @@ async def finish_test(dut, communication_interface, pipeline):
     dut._log.info(f"Cleaning up")
 
     dut.receive_queue_mailbox_valid.value = 0
-    dut.interface_mailbox_valid.value = 0
+    dut.loopback_mailbox_valid.value = 0
     dut.writeback_arbiter_mailbox_acknowledge.value = 0
     await SimulationUpdate()
 
@@ -176,7 +176,7 @@ async def message_storage(dut):
         assert dut.message_data[3].meta.tag.value == 42
         assert dut.message_data[3].data.value == 42
 
-        assert dut.mailbox_interface_ready.value == 0
+        assert dut.mailbox_loopback_ready.value == 0
     finally:
         await finish_test(dut, communication_interface, pipeline)
 

@@ -325,6 +325,82 @@ async def send_stream(dut):
     finally:
         await finish_test(dut, rr_stage, wb_stage, bus)
 
+@cocotb.test
+async def loopback_single(dut):
+    [rr_stage, wb_stage, bus] = await setup(dut)
+    try:
+        await rr_stage.request(0b000, 42, (42 << 32) | 0, 1)
+        await rr_stage.request(0b001, (42 << 32) | 0, 0, 2)
+        
+        # ctc.send x1, 42, id:0+tag:42
+        [register, value] = await wb_stage.get_writeback()
+        assert register == 1
+        assert value == 1
+
+        # ctc.recv x2, id:0+tag:42
+        [register, value] = await wb_stage.get_writeback()
+        assert register == 2
+        assert value == 42
+    finally:
+        await finish_test(dut, rr_stage, wb_stage, bus)
+
+@cocotb.test
+async def stream_loopback_spaced(dut):
+    [rr_stage, wb_stage, bus] = await setup(dut)
+    try:
+        for i in range(64):
+            await rr_stage.request(0b000, i, 0 | (42 << 32), 1)
+            [register, value] = await wb_stage.get_writeback()
+            assert register == 1
+            assert value == 1
+
+            available = False
+            while not available:
+                await rr_stage.request(0b010, 0 | (42 << 32), 0, 2)
+                [register, value] = await wb_stage.get_writeback()
+                assert register == 2
+                available = value == 1
+
+            await rr_stage.request(0b001, 0 | (42 << 32), 0, 3)
+            [register, value] = await wb_stage.get_writeback()
+            assert register == 3
+            assert value == i
+
+            await rr_stage.request(0b010, 0 | (42 << 32), 0, 4)
+            [register, value] = await wb_stage.get_writeback()
+            assert register == 4
+            assert value == 0
+    finally:
+        await finish_test(dut, rr_stage, wb_stage, bus)
+
+@cocotb.test
+async def stream_loopback_speed(dut):
+    [rr_stage, wb_stage, bus] = await setup(dut)
+    try:
+        for i in range(64):
+            await rr_stage.request(0b000, i, 0 | (42 << 32), 1)
+            await rr_stage.request(0b001, 0 | (42 << 32), 0, 3)
+
+        sent = 0
+        received = set()
+        for i in range(128):
+            [register, value] = await wb_stage.get_writeback()
+            assert register == 1 or register == 3
+
+            if register == 1:
+                assert value == 1
+                sent += 1
+            else:
+                received.add(value)
+
+        assert sent == 64
+
+        for i in range(64):
+            assert i in received
+
+    finally:
+        await finish_test(dut, rr_stage, wb_stage, bus)
+
 async def echo_server(bus):
     while True:
         [destination, tag, message] = await bus.receive()
@@ -370,6 +446,67 @@ async def stream_echo_speed(dut):
         for i in range(64):
             await rr_stage.request(0b000, i, 10 | (42 << 32), 1)
             await rr_stage.request(0b001, 10 | (42 << 32), 0, 3)
+
+        sent = 0
+        received = set()
+        for i in range(128):
+            [register, value] = await wb_stage.get_writeback()
+            assert register == 1 or register == 3
+
+            if register == 1:
+                assert value == 1
+                sent += 1
+            else:
+                received.add(value)
+
+        assert sent == 64
+
+        for i in range(64):
+            assert i in received
+
+    finally:
+        await finish_test(dut, rr_stage, wb_stage, bus)
+
+@cocotb.test
+async def stream_mixed_spaced(dut):
+    [rr_stage, wb_stage, bus] = await setup(dut)
+    try:
+        await cocotb.start(echo_server(bus))
+        
+        for i in range(64):
+            await rr_stage.request(0b000, i, (i % 2) | (42 << 32), 1)
+            [register, value] = await wb_stage.get_writeback()
+            assert register == 1
+            assert value == 1
+
+            available = False
+            while not available:
+                await rr_stage.request(0b010, (i % 2) | (42 << 32), 0, 2)
+                [register, value] = await wb_stage.get_writeback()
+                assert register == 2
+                available = value == 1
+
+            await rr_stage.request(0b001, (i % 2) | (42 << 32), 0, 3)
+            [register, value] = await wb_stage.get_writeback()
+            assert register == 3
+            assert value == i
+
+            await rr_stage.request(0b010, (i % 2) | (42 << 32), 0, 4)
+            [register, value] = await wb_stage.get_writeback()
+            assert register == 4
+            assert value == 0
+    finally:
+        await finish_test(dut, rr_stage, wb_stage, bus)
+
+@cocotb.test
+async def stream_mixed_speed(dut):
+    [rr_stage, wb_stage, bus] = await setup(dut)
+    try:
+        await cocotb.start(echo_server(bus))
+        
+        for i in range(64):
+            await rr_stage.request(0b000, i, (i % 2) | (42 << 32), 1)
+            await rr_stage.request(0b001, (i % 2) | (42 << 32), 0, 3)
 
         sent = 0
         received = set()

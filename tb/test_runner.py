@@ -1,44 +1,19 @@
 #!/usr/bin/env python3
 
-from typing import List
+from typing import List, Optional
 from pathlib import Path
-
 from dataclasses import dataclass
+
 import os
 import shutil
-
 import pytest
 
 from cocotb.runner import get_runner, Simulator
 
 SIMULATORS: List[str] = ["verilator", "questa"]
 
-class ResolvableFile:
-    def resolve(self, project_path: Path) -> Path:
-        raise NotImplementedError
-
-@dataclass
-class ProjectFile(ResolvableFile):
-    filename: str
-    
-    def resolve(self, project_path: Path) -> Path:
-        return project_path.parent / "rtl" / self.filename
-
-@dataclass
-class ProjectIncludesDir(ResolvableFile):
-    def resolve(self, project_path: Path) -> Path:
-        return project_path.parent / "includes"
-
-@dataclass
-class CommonCellsFile(ResolvableFile):
-    filename: str
-    
-    def resolve(self, project_path: Path) -> Path:
-        return project_path.parents[5] / "common_cells" / "src" / self.filename
-
 @dataclass
 class CocotbTest:
-    sources: List[ResolvableFile]
     hdl_toplevel: str
 
     def __str__(self):
@@ -47,28 +22,16 @@ class CocotbTest:
     @property
     def test_module(self):
         return f"tb_{self.hdl_toplevel}"
+    
+    def resolve_test_filelist(self, project_path: Path) -> Path:
+        return project_path / "tb_filelist.f"
 
 TESTS: List[CocotbTest] = [
-    CocotbTest([ProjectFile("bus_communication_interface.sv")], "bus_communication_interface"),
-    CocotbTest([ProjectFile("mbox.sv")], "mbox"),
-    CocotbTest([ProjectFile("request_decoder.sv")], "request_decoder"),
-    CocotbTest([ProjectFile("postoffice.sv")], "postoffice"),
-    CocotbTest(
-        [
-            ProjectFile("bus_communication_interface.sv"),
-            ProjectFile("mbox.sv"),
-            ProjectFile("postoffice.sv"),
-            ProjectFile("request_decoder.sv"),
-            CommonCellsFile("fifo_v3.sv"),
-            ProjectFile("send_queue.sv"),
-            ProjectFile("receive_queue.sv"),
-            CommonCellsFile("rr_arb_tree.sv"),
-            ProjectFile("writeback_arbiter.sv"),
-            ProjectFile("commit_safety_unit.sv"),
-            ProjectFile("xctcmsg.sv")
-        ],
-        "xctcmsg"
-    )
+    CocotbTest("bus_communication_interface"),
+    CocotbTest("mbox"),
+    CocotbTest("request_decoder"),
+    CocotbTest("postoffice"),
+    CocotbTest("xctcmsg"),
 ]
 
 def get_runners(candidates: List[str]) -> tuple[List[str], List[Simulator]]:
@@ -94,16 +57,16 @@ def project_path() -> Path:
 def test_runner(runner: Simulator, project_path: Path, cocotb_test: CocotbTest):
     hdl_toplevel_lang: str = "verilog"
 
-    sources: List[Path] = [source.resolve(project_path) for source in cocotb_test.sources]
-
     runner.build(
-        sources=sources,
-        includes=[ProjectIncludesDir().resolve(project_path)],
+        build_args=['-F', str(cocotb_test.resolve_test_filelist(project_path))],
+        hdl_library=cocotb_test.hdl_toplevel,
         hdl_toplevel=cocotb_test.hdl_toplevel,
-        waves=True
+        waves=True,
+        verilog_sources=["dummy.sv"], # We NEED to pass some source outside the filelist
     )
 
     runner.test(
+        hdl_toplevel_library=cocotb_test.hdl_toplevel,
         hdl_toplevel=cocotb_test.hdl_toplevel,
         test_module=cocotb_test.test_module,
         waves=True

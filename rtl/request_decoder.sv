@@ -1,4 +1,4 @@
-`include "xctcmsg_defs.svh"
+import xctcmsg_pkg::*;
 
 module request_decoder (
   // RR-stage
@@ -53,6 +53,7 @@ module request_decoder (
     request_decoder_send_queue_data.message.meta = rr_request_decoder_data.rs2;
     request_decoder_send_queue_data.message.data = rr_request_decoder_data.rs1;
     request_decoder_send_queue_data.register = rr_request_decoder_data.rd;
+    request_decoder_send_queue_data.passthrough = rr_request_decoder_data.passthrough;
   end
 
   always_comb begin : receive_queue
@@ -63,6 +64,7 @@ module request_decoder (
     request_decoder_receive_queue_data.meta = rr_request_decoder_data.rs1;
     request_decoder_receive_queue_data.meta_mask = ~rr_request_decoder_data.rs2;
     request_decoder_receive_queue_data.register = rr_request_decoder_data.rd;
+    request_decoder_receive_queue_data.passthrough = rr_request_decoder_data.passthrough;
   end
 
 endmodule

@@ -81,17 +81,17 @@ class CommunicationInterfaceEmulator:
             await RisingEdge()
             await SimulationUpdate()
 
-            self.dut.interface_postoffice_ready.value = self.allow_receive
+            self.dut.loopback_postoffice_ready.value = self.allow_receive
 
             if (not self.allow_receive):
                 continue
 
             await SimulationUpdate()
 
-            if (self.dut.postoffice_interface_valid.value == 1):
-                destination = int(self.dut.postoffice_interface_data.message.meta.address)
-                tag = int(self.dut.postoffice_interface_data.message.meta.tag)
-                message = int(self.dut.postoffice_interface_data.message.data)
+            if (self.dut.postoffice_loopback_valid.value == 1):
+                destination = int(self.dut.postoffice_loopback_data.message.meta.address)
+                tag = int(self.dut.postoffice_loopback_data.message.meta.tag)
+                message = int(self.dut.postoffice_loopback_data.message.data)
                 self.receive_queue.put_nowait([destination, tag, message])
                 self.dut._log.info(f"Sent: [{destination=}, {tag=}, {message=}]")
 
@@ -114,7 +114,7 @@ async def finish_test(dut, send_queue, writeback_arbiter, communication_interfac
     dut._log.info(f"Cleaning up")
 
     dut.send_queue_postoffice_valid.value = 0
-    dut.interface_postoffice_ready.value = 0
+    dut.loopback_postoffice_ready.value = 0
     dut.writeback_arbiter_postoffice_acknowledge.value = 0
     await SimulationUpdate()
 
@@ -132,7 +132,7 @@ async def reset_state(dut):
     await setup(dut)
     await RisingEdges(2)
 
-    assert int(dut.postoffice_interface_valid.value) == 0
+    assert int(dut.postoffice_loopback_valid.value) == 0
     assert int(dut.postoffice_writeback_arbiter_valid.value) == 0
 
 @cocotb.test

@@ -1,4 +1,4 @@
-`include "xctcmsg_defs.svh"
+import xctcmsg_pkg::*;
 
 module writeback_arbiter (
   input  logic clk,
