@@ -137,7 +137,7 @@ async def flush_test(dut):
         
         assert dut.request_valid.value == 0
         for i in range(4):
-            assert dut.message_valid[i].value == 0
+            assert dut.message_valid[i].value == 1
     finally:
         await finish_test(dut, communication_interface, pipeline)
 

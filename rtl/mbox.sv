@@ -38,10 +38,18 @@ module mbox #(
     logic message_deallocate_valid;
     logic [INDEX_WIDTH-1:0] message_deallocate_index;
 
+    // Message buffers operations status
+    logic message_requests_do_replace;
+
+    always_comb begin : message_buffers_operations_status
+        message_requests_do_replace =
+            message_allocate_valid & message_deallocate_valid
+            & (message_allocate_index == message_deallocate_index);
+    end
+
     // Message buffers status
     logic free_message_cells;
     logic [INDEX_WIDTH-1:0] next_free_message_cell;
-    logic message_requests_do_replace;
 
     always_comb begin : message_buffer_status
         free_message_cells = !(&message_valid);
@@ -53,10 +61,6 @@ module mbox #(
                 break;
             end
         end
-
-        message_requests_do_replace =
-      message_allocate_valid & message_deallocate_valid
-      & (message_allocate_index == message_deallocate_index);
     end
 
     always_comb begin : message_buffers_input
@@ -67,7 +71,7 @@ module mbox #(
     end
 
     always_ff @(posedge clk, negedge rst_n) begin : message_buffers_registers
-        if (!rst_n | flush) begin
+        if (!rst_n) begin
             message_valid <= 0;
         end else begin
             if (message_allocate_valid) begin

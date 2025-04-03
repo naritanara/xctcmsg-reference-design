@@ -63,21 +63,21 @@ module postoffice #(
         destination_valid = !destination_is_out_of_range;
     end
 
-    logic would_send;
-    logic can_send;
+    logic wants_to_send;
+    logic sending_now;
 
     always_comb begin : interface_communication_predicates
-        would_send = destination_valid;
-        can_send   = loopback_postoffice_ready & csu_postoffice_grant;
+        wants_to_send = send_queue_postoffice_valid & destination_valid;
+        sending_now   = postoffice_loopback_valid & loopback_postoffice_ready;
     end
 
     always_comb begin : request_acceptance
-        postoffice_send_queue_ready = (can_send | !would_send) & writeback_allocatable;
+        postoffice_send_queue_ready = (sending_now | !wants_to_send) & writeback_allocatable;
         writeback_allocate_valid = postoffice_send_queue_ready & send_queue_postoffice_valid;
     end
 
     always_comb begin : interface_communication
-        postoffice_loopback_valid = writeback_allocate_valid & destination_valid;
+        postoffice_loopback_valid = wants_to_send & writeback_allocatable & csu_postoffice_grant;
         postoffice_loopback_data.message = send_queue_postoffice_data.message;
     end
 

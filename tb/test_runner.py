@@ -58,15 +58,15 @@ def test_runner(runner: Simulator, project_path: Path, cocotb_test: CocotbTest):
     hdl_toplevel_lang: str = "verilog"
 
     runner.build(
+        build_dir=f"sim_build/{runner.__class__.__name__}/{cocotb_test.hdl_toplevel}",
         build_args=['-F', str(cocotb_test.resolve_test_filelist(project_path))],
-        hdl_library=cocotb_test.hdl_toplevel,
         hdl_toplevel=cocotb_test.hdl_toplevel,
         waves=True,
         verilog_sources=["dummy.sv"], # We NEED to pass some source outside the filelist
     )
 
     runner.test(
-        hdl_toplevel_library=cocotb_test.hdl_toplevel,
+        build_dir=f"sim_build/{runner.__class__.__name__}/{cocotb_test.hdl_toplevel}",
         hdl_toplevel=cocotb_test.hdl_toplevel,
         test_module=cocotb_test.test_module,
         waves=True

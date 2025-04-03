@@ -192,14 +192,18 @@ async def flush_test(dut):
         await RisingEdges(20)
         
         assert dut.mbox.request_valid == 1
-        for i in range(4):
-            assert dut.mbox.message_valid[i] == 1   
+        assert dut.mbox.message_valid.value == 0b1111
         
         await flush()
         
         assert dut.mbox.request_valid == 0
+        assert dut.mbox.message_valid.value == 0b1111
+        
+        # Cleanup messages left on buffers
         for i in range(4):
-            assert dut.mbox.message_valid[i] == 0
+            await rr_stage.request(0b001, 0, -1, 0)
+        for i in range(4):
+            await wb_stage.get_writeback()
         
         ## postoffice
         wb_stage.writeback_queue = Queue()
