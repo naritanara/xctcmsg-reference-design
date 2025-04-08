@@ -29,7 +29,7 @@ module writeback_arbiter (
     .clk_i(clk),
     .rst_ni(rst_n),
     .flush_i(flush),
-    .rr_i(0),
+    .rr_i(1'b0),
     .req_i({postoffice_writeback_arbiter_valid, mailbox_writeback_arbiter_valid}),
     .gnt_o({writeback_arbiter_postoffice_acknowledge, writeback_arbiter_mailbox_acknowledge}),
     .data_i({postoffice_writeback_arbiter_data, mailbox_writeback_arbiter_data}),

@@ -33,7 +33,7 @@ module send_queue #(
     .clk_i(clk),
     .rst_ni(rst_n),
     .flush_i(flush),
-    .testmode_i(0),
+    .testmode_i(1'b0),
     .full_o(full),
     .empty_o(empty),
     .usage_o(),

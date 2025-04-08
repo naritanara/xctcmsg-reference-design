@@ -82,4 +82,4 @@ module bus_communication_interface (
     bus_rdy_o = loopback_interface_ready;
   end
 
-endmodule;
+endmodule

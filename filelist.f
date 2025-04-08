@@ -1,14 +1,4 @@
 +incdir+./rtl/common_cells/include
-./includes/xctcmsg_pkg.sv
-./rtl/loopback_interceptor.sv
-./rtl/bus_communication_interface.sv
-./rtl/mbox.sv
-./rtl/postoffice.sv
-./rtl/request_decoder.sv
 ./rtl/common_cells/src/fifo_v3.sv
-./rtl/send_queue.sv
-./rtl/receive_queue.sv
 ./rtl/common_cells/src/rr_arb_tree.sv
-./rtl/writeback_arbiter.sv
-./rtl/commit_safety_unit.sv
-./rtl/xctcmsg.sv
+-F ./filelist_nodeps.f

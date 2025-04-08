@@ -117,6 +117,7 @@ async def setup(dut):
     wb_stage = WBStageEmulator(dut)
     bus = BusEmulator(dut)
 
+    dut.local_address.value = 0;
     await cocotb.start(Clock(dut.clk, 10, 'ns').start())
     await reset()
 

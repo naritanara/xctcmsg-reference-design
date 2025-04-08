@@ -1,7 +1,6 @@
 import xctcmsg_pkg::*;
 
 module xctcmsg #(
-    parameter HARTID = 0,
     parameter MAX_HARTID = 64,
     parameter SEND_QUEUE_SIZE = 4,
     parameter RECEIVE_QUEUE_SIZE = 4,
@@ -10,6 +9,8 @@ module xctcmsg #(
     input clk,
     input rst_n,
     input flush,
+
+    input logic [31:0] local_address,
 
     // RR-stage
     input logic rr_xctcmsg_valid,
@@ -142,7 +143,7 @@ module xctcmsg #(
 
     commit_safety_unit commit_safety_unit (.*);
 
-    loopback_interceptor #(.HARTID(HARTID)) loopback_interceptor (.*);
+    loopback_interceptor loopback_interceptor (.*);
     bus_communication_interface bus_communication_interface (.*);
 
     writeback_arbiter writeback_arbiter (.*);

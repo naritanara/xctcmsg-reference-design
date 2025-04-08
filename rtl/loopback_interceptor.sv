@@ -1,8 +1,8 @@
 import xctcmsg_pkg::*;
 
-module loopback_interceptor #(
-  parameter HARTID = 0
-) (
+module loopback_interceptor (
+  input  message_addr_t local_address,
+
   // Post office
   input  logic postoffice_loopback_valid,
   output logic loopback_postoffice_ready,
@@ -31,7 +31,7 @@ module loopback_interceptor #(
   assign loopback_interface_data = postoffice_loopback_data;
 
   always_comb begin : detect_loopback
-    postoffice_destination_is_self = postoffice_loopback_data.message.meta.address == HARTID;
+    postoffice_destination_is_self = postoffice_loopback_data.message.meta.address == local_address;
     should_loopback = postoffice_loopback_valid & postoffice_destination_is_self;
   end
 
@@ -58,4 +58,4 @@ module loopback_interceptor #(
     end
   end
 
-endmodule;
+endmodule
