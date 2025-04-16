@@ -3,7 +3,6 @@ import xctcmsg_pkg::*;
 module bus_communication_interface (
   input  logic clk,
   input  logic rst_n,
-  input  logic flush,
 
   // Loopback interceptor (send)
   input  logic loopback_interface_valid,
@@ -40,7 +39,7 @@ module bus_communication_interface (
 
   // Message sending
   always_ff @ (posedge clk, negedge rst_n) begin : holding_registers
-    if (!rst_n | flush) begin
+    if (!rst_n) begin
       holding_valid <= 0;
       holding_data <= 0;
     end else begin
