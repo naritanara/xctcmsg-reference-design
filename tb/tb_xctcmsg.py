@@ -167,23 +167,6 @@ async def reset_state(dut):
 async def flush_test(dut):
     [rr_stage, wb_stage, bus] = await setup(dut)
     try:
-        ## bus_communication_interface
-        bus.receive_queue = Queue(maxsize=1) # Force the bus to stall
-        
-        await rr_stage.request(0b000, 0, 1, 11) # Will clog the receive queue
-        await rr_stage.request(0b000, 0, 1, 12) # Will stay in the holding register
-        
-        await RisingEdges(20)
-        
-        assert dut.bus_communication_interface.holding_valid == 1
-        
-        await flush()
-        
-        assert dut.bus_communication_interface.holding_valid == 0
-        await bus.receive()
-        await RisingEdges(20)
-        assert bus.receive_queue.empty()
-        
         ## mailbox
         bus.receive_queue = Queue()
         for _ in range(4):

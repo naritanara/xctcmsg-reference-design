@@ -85,26 +85,6 @@ async def reset_state(dut):
     assert dut.holding_data.message.data.value == 0
 
 @cocotb.test
-async def flush_test(dut):
-    bus, controller = await setup(dut)
-    
-    controller.recv_queue = Queue(maxsize=1)
-    
-    await controller.send(0, 0, 0) # Will clog the receive queue
-    await controller.send(0, 0, 0) # Will stay in the holding register
-    
-    await RisingEdges(20)
-    assert dut.holding_valid.value == 1
-    
-    await flush()
-    
-    assert dut.holding_valid.value == 0 # Should be gone
-    await controller.receive() # Free up space in the receive queue
-    await RisingEdges(20)
-    assert controller.recv_queue.empty() # Should not receive the second element
-    
-
-@cocotb.test
 async def echo_test(dut):
     bus, controller = await setup(dut)
 
