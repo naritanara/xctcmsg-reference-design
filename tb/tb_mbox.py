@@ -62,7 +62,7 @@ class PipelineEmulator:
                 if (self.dut.mailbox_writeback_arbiter_valid.value == 1):
                     if (not self.writeback_queue.full()):
                         self.dut.writeback_arbiter_mailbox_acknowledge.value = 1
-                        register = int(self.dut.mailbox_writeback_arbiter_data.register.value)
+                        register = int(self.dut.mailbox_writeback_arbiter_data.passthrough.rd.value)
                         value = int(self.dut.mailbox_writeback_arbiter_data.value.value)
                         self.writeback_queue.put_nowait([register, value])
                         self.dut._log.info(f"Writeback sent: [{register=}, {value=}]")
@@ -79,7 +79,7 @@ class PipelineEmulator:
                     self.dut.receive_queue_mailbox_data.meta.tag.value = tag
                     self.dut.receive_queue_mailbox_data.meta_mask.address.value = source_mask
                     self.dut.receive_queue_mailbox_data.meta_mask.tag.value = tag_mask
-                    self.dut.receive_queue_mailbox_data.register.value = register
+                    self.dut.receive_queue_mailbox_data.passthrough.rd.value = register
                     self.dut.receive_queue_mailbox_data.is_avail.value = is_avail
                     self.dut._log.info(f"Received request: [{source=}, {tag=}, {source_mask=}, {tag_mask=}, {register=}, {is_avail=}]")
 
@@ -198,7 +198,7 @@ async def request_storage(dut):
         assert dut.request_data.meta.tag.value == 42
         assert dut.request_data.meta_mask.address.value == 1
         assert dut.request_data.meta_mask.tag.value == 2
-        assert dut.request_data.register.value == 4
+        assert dut.request_data.passthrough.rd.value == 4
 
         assert dut.mailbox_receive_queue_ready.value == 0
 

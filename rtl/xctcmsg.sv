@@ -18,7 +18,6 @@ module xctcmsg #(
     input logic [2:0] rr_xctcmsg_funct3,
     input logic [63:0] rr_xctcmsg_rs1,
     input logic [63:0] rr_xctcmsg_rs2,
-    input logic [4:0] rr_xctcmsg_rd,
     input exe_stage_passthrough_t rr_xctcmsg_passthrough,
 
     // Bus send
@@ -38,7 +37,6 @@ module xctcmsg #(
     // WB-stage
     output logic xctcmsg_wb_valid,
     input logic wb_xctcmsg_ready,
-    output logic [4:0] xctcmsg_wb_register,
     output logic [63:0] xctcmsg_wb_value,
     output exe_stage_passthrough_t xctcmsg_wb_passthrough,
 
@@ -123,7 +121,6 @@ module xctcmsg #(
         rr_request_decoder_data.funct3 = rr_xctcmsg_funct3;
         rr_request_decoder_data.rs1 = rr_xctcmsg_rs1;
         rr_request_decoder_data.rs2 = rr_xctcmsg_rs2;
-        rr_request_decoder_data.rd = rr_xctcmsg_rd;
         rr_request_decoder_data.passthrough = rr_xctcmsg_passthrough;
     end
 
@@ -153,7 +150,6 @@ module xctcmsg #(
         xctcmsg_wb_valid = writeback_arbiter_wb_valid;
         wb_writeback_arbiter_ready = wb_xctcmsg_ready;
 
-        xctcmsg_wb_register = writeback_arbiter_wb_data.register;
         xctcmsg_wb_value = writeback_arbiter_wb_data.value;
         xctcmsg_wb_passthrough = writeback_arbiter_wb_data.passthrough;
     end

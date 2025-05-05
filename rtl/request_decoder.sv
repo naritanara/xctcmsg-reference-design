@@ -52,7 +52,6 @@ module request_decoder (
 
     request_decoder_send_queue_data.message.meta = rr_request_decoder_data.rs2;
     request_decoder_send_queue_data.message.data = rr_request_decoder_data.rs1;
-    request_decoder_send_queue_data.register = rr_request_decoder_data.rd;
     request_decoder_send_queue_data.passthrough = rr_request_decoder_data.passthrough;
   end
 
@@ -63,7 +62,6 @@ module request_decoder (
     request_decoder_receive_queue_data.is_avail = request_type == REQUEST_TYPE_AVAIL;
     request_decoder_receive_queue_data.meta = rr_request_decoder_data.rs1;
     request_decoder_receive_queue_data.meta_mask = ~rr_request_decoder_data.rs2;
-    request_decoder_receive_queue_data.register = rr_request_decoder_data.rd;
     request_decoder_receive_queue_data.passthrough = rr_request_decoder_data.passthrough;
   end
 

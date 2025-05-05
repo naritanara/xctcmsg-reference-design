@@ -166,7 +166,6 @@ module mbox #(
             end
         end
 
-        mailbox_writeback_arbiter_data.register = request_data.register;
         mailbox_writeback_arbiter_data.passthrough = request_data.passthrough;
     end
 

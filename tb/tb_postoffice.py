@@ -32,7 +32,7 @@ class SendQueueEmulator:
                 self.dut.send_queue_postoffice_data.message.meta.address.value = destination
                 self.dut.send_queue_postoffice_data.message.meta.tag.value = tag
                 self.dut.send_queue_postoffice_data.message.data.value = message
-                self.dut.send_queue_postoffice_data.register.value = register
+                self.dut.send_queue_postoffice_data.passthrough.rd.value = register
                 self.dut._log.info(f"Request in: [{destination=}, {tag=}, {message=}, {register=}]")
 
 class WritebackArbiterEmulator:
@@ -59,7 +59,7 @@ class WritebackArbiterEmulator:
 
             if (self.dut.postoffice_writeback_arbiter_valid.value == 1):
                 self.dut.writeback_arbiter_postoffice_acknowledge.value = 1
-                register = int(self.dut.postoffice_writeback_arbiter_data.register.value)
+                register = int(self.dut.postoffice_writeback_arbiter_data.passthrough.rd.value)
                 value = int(self.dut.postoffice_writeback_arbiter_data.value.value)
                 self.writeback_queue.put_nowait([register, value])
                 self.dut._log.info(f"Writeback sent: [{register=}, {value=}]")
@@ -171,7 +171,7 @@ async def writeback_storage(dut):
         await RisingEdges(20)
 
         assert int(dut.writeback_valid.value) == 1
-        assert int(dut.writeback_data.register.value) == 1
+        assert int(dut.writeback_data.passthrough.rd.value) == 1
         assert int(dut.writeback_data.value.value) == 1
 
         assert int(dut.postoffice_send_queue_ready.value == 0)

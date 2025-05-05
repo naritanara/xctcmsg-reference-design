@@ -33,7 +33,7 @@ class RRStageEmulator:
                 self.dut.rr_xctcmsg_funct3.value = funct3
                 self.dut.rr_xctcmsg_rs1.value = rs1
                 self.dut.rr_xctcmsg_rs2.value = rs2
-                self.dut.rr_xctcmsg_rd.value = rd
+                self.dut.rr_xctcmsg_passthrough.rd.value = rd
                 self.dut._log.info(f"Request in: [{funct3=}, {rs1=}, {rs2=}, {rd=}]")
 
 class WBStageEmulator:
@@ -62,7 +62,7 @@ class WBStageEmulator:
             if (self.dut.xctcmsg_wb_valid.value == 0 or self.writeback_queue.full()):
                 continue
 
-            register = int(self.dut.xctcmsg_wb_register.value)
+            register = int(self.dut.xctcmsg_wb_passthrough.rd.value)
             value = int(self.dut.xctcmsg_wb_value.value)
             self.writeback_queue.put_nowait([register, value])
             self.dut._log.info(f"Writeback out: [{register=}, {value=}]")

@@ -49,7 +49,6 @@ module postoffice #(
         end else begin
             if (writeback_allocate_valid & writeback_allocatable) begin
                 writeback_valid <= 1;
-                writeback_data.register <= send_queue_postoffice_data.register;
                 writeback_data.value <= destination_valid ? 1 : 0;
                 writeback_data.passthrough <= send_queue_postoffice_data.passthrough;
             end else if (writeback_deallocate_valid) begin
