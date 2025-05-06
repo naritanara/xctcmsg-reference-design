@@ -62,7 +62,7 @@ def test_runner(runner: Simulator, project_path: Path, cocotb_test: CocotbTest):
         build_args=['-F', str(cocotb_test.resolve_test_filelist(project_path))],
         hdl_toplevel=cocotb_test.hdl_toplevel,
         waves=True,
-        verilog_sources=["dummy.sv"], # We NEED to pass some source outside the filelist
+        verilog_sources=[project_path / "dummy.sv"], # We NEED to pass some source outside the filelist
     )
 
     runner.test(
