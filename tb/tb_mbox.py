@@ -1,20 +1,28 @@
+from typing import Tuple
 import cocotb
 from cocotb.handle import SimHandleBase
 from cocotb.clock import Clock
 from cocotb.queue import Queue
+from cocotb.regression import Iterable
 
-from cocotb_utils import SimulationUpdate, reset, flush, RisingEdge, RisingEdges
+from cocotb_utils import RisingEdgesHoldingAssertion, SimulationUpdate, reset, flush, RisingEdge, RisingEdges
+from xctcmsg_pkg import InterfaceReceiveData, ReceiveQueueData, Message, WritebackArbiterData
+
+MESSAGE_BUFFER_SIZE = 4
 
 class CommunicationInterfaceEmulator:
     dut: SimHandleBase
-    receive_queue: Queue
+    receive_queue: Queue[InterfaceReceiveData]
 
-    def __init__(self, dut):
+    def __init__(self, dut: SimHandleBase):
         self.dut = dut
         self.receive_queue = Queue()
 
-    async def receive(self, source, tag, message):
-        await self.receive_queue.put([source, tag, message])
+    async def receive(self, *items: Message | InterfaceReceiveData):
+        for item in items:
+            if isinstance(item, Message):
+                item = InterfaceReceiveData(item)
+            await self.receive_queue.put(item)
 
     async def start(self):
         while True:
@@ -27,28 +35,27 @@ class CommunicationInterfaceEmulator:
                 continue
 
             if (not self.receive_queue.empty()):
-                [source, tag, message] = self.receive_queue.get_nowait()
+                data = self.receive_queue.get_nowait()
                 self.dut.loopback_mailbox_valid.value = 1
-                self.dut.loopback_mailbox_data.message.meta.address.value = source
-                self.dut.loopback_mailbox_data.message.meta.tag.value = tag
-                self.dut.loopback_mailbox_data.message.data.value = message
-                self.dut._log.info(f"Received: [{source=}, {tag=}, {message=}]")
+                data.write_to_signal(self.dut.loopback_mailbox_data)
+                self.dut._log.info(f"Received: {data}")
 
 class PipelineEmulator:
     dut: SimHandleBase
-    request_queue: Queue
+    request_queue: Queue[ReceiveQueueData]
     allow_writeback = True
-    writeback_queue: Queue
+    writeback_queue: Queue[WritebackArbiterData]
 
-    def __init__(self, dut):
+    def __init__(self, dut: SimHandleBase):
         self.dut = dut
         self.request_queue = Queue()
         self.writeback_queue = Queue()
 
-    async def request(self, source, tag, source_mask, tag_mask, register, is_avail):
-        await self.request_queue.put([source, tag, source_mask, tag_mask, register, is_avail])
+    async def request(self, *items: ReceiveQueueData):
+        for item in items:
+            await self.request_queue.put(item)
 
-    async def get_writeback(self):
+    async def get_writeback(self) -> WritebackArbiterData:
         return await self.writeback_queue.get()
 
     async def start(self):
@@ -62,10 +69,9 @@ class PipelineEmulator:
                 if (self.dut.mailbox_writeback_arbiter_valid.value == 1):
                     if (not self.writeback_queue.full()):
                         self.dut.writeback_arbiter_mailbox_acknowledge.value = 1
-                        register = int(self.dut.mailbox_writeback_arbiter_data.passthrough.rd.value)
-                        value = int(self.dut.mailbox_writeback_arbiter_data.value.value)
-                        self.writeback_queue.put_nowait([register, value])
-                        self.dut._log.info(f"Writeback sent: [{register=}, {value=}]")
+                        data = WritebackArbiterData.from_signal(self.dut.mailbox_writeback_arbiter_data)
+                        self.writeback_queue.put_nowait(data)
+                        self.dut._log.info(f"Writeback sent: {data}")
 
             await SimulationUpdate()
 
@@ -73,17 +79,12 @@ class PipelineEmulator:
 
             if (self.dut.mailbox_receive_queue_ready.value == 1):
                 if (not self.request_queue.empty()):
-                    [source, tag, source_mask, tag_mask, register, is_avail] = self.request_queue.get_nowait()
+                    data = self.request_queue.get_nowait()
                     self.dut.receive_queue_mailbox_valid.value = 1
-                    self.dut.receive_queue_mailbox_data.meta.address.value = source
-                    self.dut.receive_queue_mailbox_data.meta.tag.value = tag
-                    self.dut.receive_queue_mailbox_data.meta_mask.address.value = source_mask
-                    self.dut.receive_queue_mailbox_data.meta_mask.tag.value = tag_mask
-                    self.dut.receive_queue_mailbox_data.passthrough.rd.value = register
-                    self.dut.receive_queue_mailbox_data.is_avail.value = is_avail
-                    self.dut._log.info(f"Received request: [{source=}, {tag=}, {source_mask=}, {tag_mask=}, {register=}, {is_avail=}]")
+                    data.write_to_signal(self.dut.receive_queue_mailbox_data)
+                    self.dut._log.info(f"Received request: {data}")
 
-async def finish_test(dut, communication_interface, pipeline):
+async def finish_test(dut: SimHandleBase, communication_interface: CommunicationInterfaceEmulator, pipeline: PipelineEmulator):
     dut._log.info(f"Cleaning up")
 
     dut.receive_queue_mailbox_valid.value = 0
@@ -97,7 +98,7 @@ async def finish_test(dut, communication_interface, pipeline):
     while not pipeline.request_queue.empty():
         pipeline.request_queue.get_nowait()
 
-async def setup(dut):
+async def setup(dut: SimHandleBase) -> Tuple[CommunicationInterfaceEmulator, PipelineEmulator]:
     communication_interface = CommunicationInterfaceEmulator(dut)
     pipeline = PipelineEmulator(dut)
     dut.csu_mailbox_grant.value = 1
@@ -108,13 +109,12 @@ async def setup(dut):
     await cocotb.start(communication_interface.start())
     await cocotb.start(pipeline.start())
 
-    return [communication_interface, pipeline]
+    return (communication_interface, pipeline)
 
 @cocotb.test
 async def reset_state(dut):
-    await cocotb.start(Clock(dut.clk, 10, 'ns').start())
-
-    await reset()
+    await setup(dut)
+    await RisingEdges(2)
 
     assert dut.message_valid.value == 0
     assert dut.request_valid.value == 0
@@ -123,21 +123,20 @@ async def reset_state(dut):
 async def flush_test(dut):
     communication_interface, pipeline = await setup(dut)
     try:
-        for _ in range(4):
-            await communication_interface.receive(0, 0, 0)
-        await pipeline.request(10, 1, -1, -1, 1, False) # Should stall
-        
-        await RisingEdges(6)
-        
+        await communication_interface.receive(*([Message.quick(0, 0, 0)] * MESSAGE_BUFFER_SIZE))
+        await pipeline.request(ReceiveQueueData.quick(10, 1, -1, -1, 1, False)) # Should stall
+
+        await RisingEdges(2 + MESSAGE_BUFFER_SIZE)
+
         assert dut.request_valid.value == 1
-        for i in range(4):
-            assert dut.message_valid[i].value == 1
-        
+        assert dut.message_valid.value.binstr == '1' * MESSAGE_BUFFER_SIZE
+
         await flush()
-        
+
         assert dut.request_valid.value == 0
-        for i in range(4):
-            assert dut.message_valid[i].value == 1
+        assert dut.message_valid.value.binstr == '1' * MESSAGE_BUFFER_SIZE
+
+        assert dut.mailbox_receive_queue_ready == '1'
     finally:
         await finish_test(dut, communication_interface, pipeline)
 
@@ -147,36 +146,26 @@ async def message_storage(dut):
     try:
         pipeline.allow_writeback = False
 
-        await communication_interface.receive(1, 2, 3)
-        await communication_interface.receive(10, 20, 30)
-        await communication_interface.receive(0, 0, 0)
-        await communication_interface.receive(42, 42, 42)
-        await communication_interface.receive(13, 13, 13) # This one will be blocked
+        messages = [
+            Message.quick(1, 2, 3),
+            Message.quick(10, 20, 30),
+            Message.quick(0, 0, 0),
+            Message.quick(42, 42, 42),
+            Message.quick(13, 13, 13), # This one will be blocked
+        ]
 
-        for i in range(20):
-            await RisingEdge()
+        assert len(messages) == MESSAGE_BUFFER_SIZE + 1, "there should be just enough messages to overflow the buffers"
 
-        assert dut.message_valid[0].value == 1
-        assert dut.message_data[0].meta.address.value == 1
-        assert dut.message_data[0].meta.tag.value == 2
-        assert dut.message_data[0].data.value == 3
+        await communication_interface.receive(*messages)
+        
+        await RisingEdges(20)
 
-        assert dut.message_valid[1].value == 1
-        assert dut.message_data[1].meta.address.value == 10
-        assert dut.message_data[1].meta.tag.value == 20
-        assert dut.message_data[1].data.value == 30
-
-        assert dut.message_valid[2].value == 1
-        assert dut.message_data[2].meta.address.value == 0
-        assert dut.message_data[2].meta.tag.value == 0
-        assert dut.message_data[2].data.value == 0
-
-        assert dut.message_valid[3].value == 1
-        assert dut.message_data[3].meta.address.value == 42
-        assert dut.message_data[3].meta.tag.value == 42
-        assert dut.message_data[3].data.value == 42
+        for i, (message, buffered_message) in enumerate(zip(messages[:-1], Message.from_array_signal(dut.message_data))):
+            assert dut.message_valid.value[i] == 1
+            assert buffered_message == message
 
         assert dut.mailbox_loopback_ready.value == 0
+        assert not communication_interface.receive_queue.empty()
     finally:
         await finish_test(dut, communication_interface, pipeline)
 
@@ -185,20 +174,19 @@ async def request_storage(dut):
     [communication_interface, pipeline] = await setup(dut)
     try:
         pipeline.allow_writeback = False
+        
+        requests = [
+            ReceiveQueueData.quick(10, 42, 1, 2, 4, True),
+            ReceiveQueueData.quick(42, 10, 4, 3, 1, False), # This one will be blocked
+        ]
+        
+        await pipeline.request(*requests)
 
-        await pipeline.request(10, 42, 1, 2, 4, True)
-        await pipeline.request(42, 10, 4, 3, 1, False) # This one will be blocked
+        await RisingEdges(20)
 
-        for i in range(20):
-            await RisingEdge()
-
-        assert dut.request_valid.value == True
-        assert dut.request_data.is_avail.value == True
-        assert dut.request_data.meta.address.value == 10
-        assert dut.request_data.meta.tag.value == 42
-        assert dut.request_data.meta_mask.address.value == 1
-        assert dut.request_data.meta_mask.tag.value == 2
-        assert dut.request_data.passthrough.rd.value == 4
+        assert dut.request_valid.value == 1
+        buffered_request_data = ReceiveQueueData.from_signal(dut.request_data)
+        assert buffered_request_data == requests[0]
 
         assert dut.mailbox_receive_queue_ready.value == 0
 
@@ -209,25 +197,25 @@ async def request_storage(dut):
 async def full_match_single(dut):
     [communication_interface, pipeline] = await setup(dut)
     try:
-        await communication_interface.receive(10, 42, 5)
+        message = Message.quick(10, 42, 5)
+        requests = [
+            ReceiveQueueData.quick(10, 42, -1, -1, 1, True),
+            ReceiveQueueData.quick(10, 42, -1, -1, 2, False),
+            ReceiveQueueData.quick(10, 42, -1, -1, 3, True),
+        ]
+        expected_writebacks = [
+            WritebackArbiterData.quick(1, 1),
+            WritebackArbiterData.quick(2, 5),
+            WritebackArbiterData.quick(3, 0),
+        ]
+        
+        await communication_interface.receive(message)
         await RisingEdges(2)
-        await pipeline.request(10, 42, -1, -1, 1, True)
-        await pipeline.request(10, 42, -1, -1, 2, False)
-        await pipeline.request(10, 42, -1, -1, 3, True)
+        await pipeline.request(*requests)
 
-        [register, value] = await pipeline.get_writeback()
-        assert register == 1
-        assert value == 1
-
-
-        [register, value] = await pipeline.get_writeback()
-        assert register == 2
-        assert value == 5
-
-
-        [register, value] = await pipeline.get_writeback()
-        assert register == 3
-        assert value == 0
+        for expected_writeback in expected_writebacks:
+            writeback = await pipeline.get_writeback()
+            assert writeback == expected_writeback
 
     finally:
         await finish_test(dut, communication_interface, pipeline)
@@ -236,20 +224,22 @@ async def full_match_single(dut):
 async def full_match_stream(dut):
     [communication_interface, pipeline] = await setup(dut)
     try:
-        for i in range(64):
-            await communication_interface.receive(10, 42, i)
-            await pipeline.request(10, 42, -1, -1, 1, False)
+        STREAM_LENGTH = 64
+        messages = [Message.quick(10, 42, x) for x in range(STREAM_LENGTH)]
+        requests = [ReceiveQueueData.quick(10, 42, -1, -1, 1, False)] * STREAM_LENGTH
+        
+        await communication_interface.receive(*messages)
+        await pipeline.request(*requests)
 
         received_values = set()
-        for i in range(64):
-            [register, value] = await pipeline.get_writeback()
-            assert register == 1
-            assert value not in received_values
+        for _ in range(64):
+            writeback = await pipeline.get_writeback()
+            assert writeback.passthrough.rd.integer == 1
+            assert writeback.value.integer not in received_values
 
-            received_values.add(value)
+            received_values.add(writeback.value.integer)
 
-        for i in range(64):
-            assert i in received_values
+        assert received_values == set(range(64))
 
     finally:
         await finish_test(dut, communication_interface, pipeline)
@@ -258,28 +248,32 @@ async def full_match_stream(dut):
 async def partial_match_single(dut):
     [communication_interface, pipeline] = await setup(dut)
     try:
-        await communication_interface.receive(0b111, 0b1010, 42)
+        message = Message.quick(0b111, 0b1010, 42)
+        requests = [
+            ReceiveQueueData.quick(0b101, 0b0000, -1, -1, 1, True),
+            ReceiveQueueData.quick(0b101, 0b0000, 0b101, 0b0101, 2, True),
+            ReceiveQueueData.quick(0b101, 0b0000, 0b101, 0b0101, 3, False),
+            ReceiveQueueData.quick(0b101, 0b0000, 0b101, 0b0101, 4, True),
+        ]
+        expected_writebacks = [
+            WritebackArbiterData.quick(1, 0),
+            WritebackArbiterData.quick(2, None), # value >= 1
+            WritebackArbiterData.quick(3, 42),
+            WritebackArbiterData.quick(4, 0),
+        ]
+        
+        await communication_interface.receive(message)
         await RisingEdges(2)
-        await pipeline.request(0b101, 0b0000, -1, -1, 1, True)
-        await pipeline.request(0b101, 0b0000, 0b101, 0b0101, 1, True)
-        await pipeline.request(0b101, 0b0000, 0b101, 0b0101, 2, False)
-        await pipeline.request(0b101, 0b0000, 0b101, 0b0101, 3, True)
+        await pipeline.request(*requests)
 
-        [register, value] = await pipeline.get_writeback()
-        assert register == 1
-        assert value == 0
-
-        [register, value] = await pipeline.get_writeback()
-        assert register == 1
-        assert value >= 1
-
-        [register, value] = await pipeline.get_writeback()
-        assert register == 2
-        assert value == 42
-
-        [register, value] = await pipeline.get_writeback()
-        assert register == 3
-        assert value == 0
+        for expected_writeback in expected_writebacks:
+            writeback = await pipeline.get_writeback()
+            
+            if expected_writeback.value.is_resolvable:
+                assert writeback == expected_writeback
+            else: # Handle value >= 1 (marked with value == None)
+                assert writeback.passthrough.rd == expected_writeback.passthrough.rd
+                assert writeback.value.integer >= 1
 
     finally:
         await finish_test(dut, communication_interface, pipeline)
@@ -288,20 +282,22 @@ async def partial_match_single(dut):
 async def partial_match_stream(dut):
     [communication_interface, pipeline] = await setup(dut)
     try:
-        for i in range(64):
-            await communication_interface.receive(-1, -1, i)
-            await pipeline.request(0, 0, 0, 0, 1, False)
+        STREAM_LENGTH = 64
+        messages = [Message.quick(-1, -1, x) for x in range(STREAM_LENGTH)]
+        requests = [ReceiveQueueData.quick(0, 0, 0, 0, 1, False)] * STREAM_LENGTH
+        
+        await communication_interface.receive(*messages)
+        await pipeline.request(*requests)
 
         received_values = set()
-        for i in range(64):
-            [register, value] = await pipeline.get_writeback()
-            assert register == 1
-            assert value not in received_values
+        for _ in range(64):
+            writeback = await pipeline.get_writeback()
+            assert writeback.passthrough.rd.integer == 1
+            assert writeback.value.integer not in received_values
 
-            received_values.add(value)
+            received_values.add(writeback.value.integer)
 
-        for i in range(64):
-            assert i in received_values
+        assert received_values == set(range(64))
 
     finally:
         await finish_test(dut, communication_interface, pipeline)
@@ -310,17 +306,17 @@ async def partial_match_stream(dut):
 async def stall_until_receive(dut):
     [communication_interface, pipeline] = await setup(dut)
     try:
-        await pipeline.request(0, 0, 0, 0, 1, False)
+        message = Message.quick(0, 0, 42)
+        request = ReceiveQueueData.quick(0, 0, 0, 0, 1, False)
+        expected_writeback = WritebackArbiterData.quick(1, 42)
+        
+        await pipeline.request(request)
 
-        for i in range(64):
-            await RisingEdge()
-            assert dut.mailbox_writeback_arbiter_valid.value == 0
+        await RisingEdgesHoldingAssertion(64, lambda: dut.mailbox_writeback_arbiter_valid.value == 0)
 
-        await communication_interface.receive(0, 0, 42)
-        [register, value] = await pipeline.get_writeback()
-
-        assert register == 1
-        assert value == 42
+        await communication_interface.receive(message)
+        writeback = await pipeline.get_writeback()
+        assert writeback == expected_writeback
 
     finally:
         await finish_test(dut, communication_interface, pipeline)

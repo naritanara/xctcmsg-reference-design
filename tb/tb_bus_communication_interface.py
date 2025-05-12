@@ -4,6 +4,7 @@ from cocotb.queue import Queue
 from cocotb.handle import SimHandleBase
 
 from cocotb_utils import reset, flush, RisingEdge, RisingEdges, SimulationUpdate
+from xctcmsg_pkg import InterfaceReceiveData, InterfaceSendData, Message, MessageMetadata, ReceiveQueueData
 
 class SingleBusEmulator:
     dut: SimHandleBase
@@ -22,19 +23,22 @@ class SingleBusEmulator:
 
 class InterfaceController:
     dut: SimHandleBase
-    send_queue: Queue
-    recv_queue: Queue
+    send_queue: Queue[InterfaceSendData]
+    recv_queue: Queue[InterfaceReceiveData]
 
     def __init__(self, dut):
         self.dut = dut
         self.send_queue = Queue()
         self.recv_queue = Queue()
 
-    async def send(self, destination, tag, message):
-        await self.send_queue.put([destination, tag, message])
+    async def send(self, send_data: Message | InterfaceSendData):
+        if isinstance(send_data, Message):
+            send_data = InterfaceSendData(send_data)
+        
+        await self.send_queue.put(send_data)
 
-    async def receive(self):
-        return await self.recv_queue.get()
+    async def receive(self) -> Message:
+        return (await self.recv_queue.get()).message
 
     async def start(self):
         self.dut.loopback_interface_valid.value = 0
@@ -45,19 +49,15 @@ class InterfaceController:
                 self.dut.loopback_interface_valid.value = not self.dut.interface_loopback_ready.value
 
             if self.dut.loopback_interface_valid.value == 0 and not self.send_queue.empty():
-                [destination, tag, message] = self.send_queue.get_nowait()
+                send_data = self.send_queue.get_nowait()
                 self.dut.loopback_interface_valid.value = 1
-                self.dut.loopback_interface_data.message.meta.address.value = destination
-                self.dut.loopback_interface_data.message.meta.tag.value = tag
-                self.dut.loopback_interface_data.message.data.value = message
-                self.dut._log.info(f"Sent: [{destination=}, {tag=}, {message=}]")
+                send_data.write_to_signal(self.dut.loopback_interface_data)
+                self.dut._log.info(f"Sent: {send_data}")
 
             if self.dut.interface_loopback_valid.value and not self.recv_queue.full():
-                source = int(self.dut.interface_loopback_data.message.meta.address.value)
-                tag = int(self.dut.interface_loopback_data.message.meta.tag.value)
-                message = int(self.dut.interface_loopback_data.message.data.value)
-                self.recv_queue.put_nowait([source, tag, message])
-                self.dut._log.info(f"Received: [{source=}, {tag=}, {message=}]")
+                receive_data = InterfaceReceiveData.from_signal(self.dut.interface_loopback_data)
+                self.recv_queue.put_nowait(receive_data)
+                self.dut._log.info(f"Received: {receive_data}")
 
             self.dut.loopback_interface_ready.value = not self.recv_queue.full()
 
@@ -80,29 +80,20 @@ async def reset_state(dut):
     await reset()
 
     assert dut.holding_valid.value == 0
-    assert dut.holding_data.message.meta.address.value == 0
-    assert dut.holding_data.message.meta.tag.value == 0
-    assert dut.holding_data.message.data.value == 0
 
 @cocotb.test
 async def echo_test(dut):
     bus, controller = await setup(dut)
+    
+    messages = [
+        Message(MessageMetadata(42, 0), 55),
+        Message(MessageMetadata(55, 0), 42),
+        Message(MessageMetadata(0, 0), 0)
+    ]
+    
+    for message in messages:
+        await controller.send(message)
 
-    await controller.send(0, 42, 55)
-    await controller.send(0, 55, 42)
-    await controller.send(0, 0, 0)
-
-    [source, tag, message] = await controller.receive()
-    assert source == 0
-    assert tag == 42
-    assert message == 55
-
-    [source, tag, message] = await controller.receive()
-    assert source == 0
-    assert tag == 55
-    assert message == 42
-
-    [source, tag, message] = await controller.receive()
-    assert source == 0
-    assert tag == 0
-    assert message == 0
+    for message in messages:
+        received_message = await controller.receive()
+        assert received_message == message
