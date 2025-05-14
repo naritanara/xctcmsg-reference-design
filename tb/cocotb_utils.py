@@ -1,20 +1,49 @@
-from typing import Awaitable, Callable, Optional, override, ClassVar, Dict, Iterable, Literal, NewType, Protocol, Self, Type, Any, runtime_checkable
+from contextlib import AbstractAsyncContextManager, contextmanager
+from enum import Enum
+import logging
+
+from logging import Logger
+from typing import AsyncGenerator, Awaitable, Callable, Mapping, Optional, override, ClassVar, Dict, Iterable, Self, Type, Any
 from functools import reduce
-from abc import abstractclassmethod, abstractmethod
-from dataclasses import MISSING, dataclass, asdict, fields, field
+from abc import ABC, abstractmethod
+from dataclasses import dataclass, fields
+
+import cocotb
 
 from cocotb.handle import SimHandleBase
-from cocotb.triggers import Timer, _ParameterizedSingletonAndABC
-from cocotb.utils import Decimal, ParametrizedSingleton
+from cocotb.queue import Queue
+from cocotb.task import Task
+from cocotb.triggers import FallingEdge, Timer
+from cocotb.utils import Decimal
 from cocotb import triggers
 from cocotb import top
 from cocotb import SIM_NAME
 from cocotb.types.logic_array import LogicArray
 from cocotb.types.range import Range
 from cocotb.types import concat
+from cocotb.clock import Clock
 
 # make pyright happy :D (top is only undefined during test discovery)
 assert isinstance(top, SimHandleBase)
+
+LOGGER = logging.getLogger('tb')
+LOGGER.setLevel(logging.INFO)
+
+type PseudoSignalMapping = Mapping[str, PseudoSignalMapping | str]
+
+class PseudoSignal:
+    _signal_mapping: 'Mapping[str, SimHandleBase | PseudoSignal]'
+    
+    def __init__(self, handle: SimHandleBase, signal_mapping: PseudoSignalMapping):
+        self._signal_mapping = dict()
+        for name, value in signal_mapping.items():
+            if isinstance(value, str):
+                self._signal_mapping[name] = getattr(handle, value)
+            elif isinstance(value, Mapping):
+                self._signal_mapping[name] = PseudoSignal(handle, value)
+
+    def __getattr__(self, name: str) -> 'SimHandleBase | PseudoSignal':
+        return self._signal_mapping[name]
 
 class CheckedLogicArray:
     def __init__(self, bits):
@@ -159,6 +188,22 @@ class SVStruct():
             yield cls.from_array_signal_single(signal, i)
 
     @classmethod
+    def zeroed(cls) -> Self:
+        kw = dict()
+
+        for field in fields(cls):
+            assert isinstance(field.type, Type)
+            field_name = field.name
+            field_type = field.type
+
+            if issubclass(field_type, SVStruct):
+               kw[field_name] = field_type.zeroed()
+            else:
+                kw[field_name] = 0
+
+        return cls(**kw)
+
+    @classmethod
     def from_logicarray(cls, raw: LogicArray):
         kw = dict()
         offset = 0
@@ -243,6 +288,290 @@ class SVStruct():
         ret += ')'
 
         return ret
+
+@dataclass
+class ValRdyInterface:
+    val: SimHandleBase
+    rdy: SimHandleBase
+    data: SimHandleBase | PseudoSignal
+    rdy_is_ack: bool = False
+    producer_name: str = "DUT"
+    consumer_name: str = "DUT"
+
+class QueueState(Enum):
+    EMPTY = 0,
+    PARTIAL = 1,
+    FULL = 2,
+
+class TBTask(ABC):
+    __task: Task
+    __stop_event: Optional[triggers.Event]
+    __subtasks: Iterable['TBTask']
+    
+    def __init__(self, *, use_kill: bool=False, subtasks: Iterable['TBTask']=[]):
+        self.__task = cocotb.create_task(self._task_coroutine())
+        self.__stop_event = None if use_kill else triggers.Event()
+        self.__subtasks = subtasks
+    
+    @property
+    def _stop_event(self) -> triggers.Event:
+        if self.__stop_event is None:
+            raise ValueError("There is no stop event, this task must be killed")
+        return self.__stop_event
+    
+    @abstractmethod
+    async def _task_coroutine(self):
+        pass
+    
+    async def start(self):
+        for task in self.__subtasks:
+            await task.start()
+            
+        await cocotb.start(self.__task)
+
+    async def stop(self):
+        if self.__stop_event is None:
+            self.__task.kill()
+        else:
+            self.__stop_event.set()
+            await self.__task.join()
+        
+        for task in self.__subtasks:
+            await task.stop()
+
+class ValRdyMonitor[Data: SVStruct](TBTask):
+    interface: ValRdyInterface
+    bus_data_type: Type[Data]
+
+    logger: Logger
+
+    def __init__(self, interface: ValRdyInterface, bus_data_type: Type[Data]):
+        super().__init__()
+        
+        self.interface = interface
+        self.bus_data_type = bus_data_type
+
+        self.logger = LOGGER.getChild(self.__class__.__name__)
+
+    async def _task_coroutine(self):
+        self.logger.info(f'Started monitoring the Valid-Ready interface between {self.interface.producer_name} and {self.interface.consumer_name}')
+
+        next_iteration_trigger = triggers.First(triggers.RisingEdge(top.clk), self._stop_event.wait())
+
+        while not self._stop_event.is_set():
+            if self.interface.rdy.value == 1 and self.interface.val.value == 1:
+                value = self.bus_data_type.from_signal(self.interface.data)
+                self.logger.info(f"{self.interface.producer_name} -> {self.interface.consumer_name}: {value}")
+
+            await next_iteration_trigger
+
+        self.logger.info(f'Stopped monitoring the Valid-Ready interface between {self.interface.producer_name} and {self.interface.consumer_name}')
+
+class ValRdyDriver[Data: SVStruct](TBTask):
+    interface: ValRdyInterface
+    bus_data_type: Type[Data]
+    enabled: bool
+
+    logger: Logger
+    queue: Queue[Data]
+    ready_event: triggers.Event
+
+    def __init__(self, interface: ValRdyInterface, bus_data_type: Type[Data], enabled: bool=True):
+        super().__init__(subtasks=[ValRdyMonitor(interface, bus_data_type)])
+        
+        self.interface = interface
+        self.bus_data_type = bus_data_type
+        self.enabled = enabled
+
+        self.logger = LOGGER.getChild(self._get_name())
+        self.queue = Queue()
+        self.ready_event = triggers.Event()
+
+    @property
+    def queue_state(self):
+        if self.queue.empty():
+            return QueueState.EMPTY
+        elif self.queue.full():
+            return QueueState.FULL
+        else:
+            return QueueState.PARTIAL
+
+    @contextmanager
+    def disabled(self):
+        old_enabled = self.enabled
+        self.enabled = False
+        try:
+            yield
+        finally:
+            self.enabled = old_enabled
+
+    async def _task_coroutine(self):
+        self.logger.info(f'Started driving the Valid-Ready interface as a {self._driving_mode()}')
+
+        next_iteration_trigger = triggers.First(triggers.RisingEdge(top.clk), self._stop_event.wait())
+
+        await self._driver_setup()
+        await SimulationUpdate()
+        self.ready_event.set()
+        
+        while not self._stop_event.is_set():
+            await self._driver_on_rising_edge()
+            await next_iteration_trigger
+
+        await self._driver_cleanup()
+
+        self.logger.info(f'Stopped driving the Valid-Ready interface as a {self._driving_mode()}')
+
+    @override
+    async def start(self):
+        await super().start()
+        await self.ready_event.wait()
+
+    @abstractmethod
+    def _get_name(self):
+        raise NotImplementedError
+
+    @staticmethod
+    @abstractmethod
+    def _driving_mode() -> str:
+        raise NotImplementedError
+
+    @abstractmethod
+    async def _driver_setup(self):
+        raise NotImplementedError
+
+    @abstractmethod
+    async def _driver_on_rising_edge(self):
+        raise NotImplementedError
+
+    @abstractmethod
+    async def _driver_cleanup(self):
+        raise NotImplementedError
+
+class ValRdyProducer[Data: SVStruct](ValRdyDriver[Data]):
+    def _get_name(self):
+        return self.interface.producer_name.replace(' ', '')
+
+    @staticmethod
+    def _driving_mode() -> str:
+        return 'producer'
+        
+    @property
+    @override
+    def queue_state(self):
+        # Take into account that the value in head could be latched
+        if self.queue.empty() and self.interface.val.value == 0:
+            return QueueState.EMPTY
+        elif self.queue.full():
+            return QueueState.FULL
+        else:
+            return QueueState.PARTIAL
+
+    async def enqueue_values(self, *values: Data):
+        for value in values:
+            await self.queue.put(value)
+
+    async def _driver_setup(self):
+        self.interface.val.value = 0
+        self.bus_data_type.zeroed().write_to_signal(self.interface.data)
+
+    async def _driver_on_rising_edge(self):
+        if self.interface.rdy.value == 1 and self.interface.val.value == 1:
+            self.interface.val.value = 0
+        
+        await FallingEdge(top.clk)
+        
+        if self.interface.val.value == 0 and self.enabled and not self.queue.empty():
+            self.interface.val.value = 1
+            self.queue.get_nowait().write_to_signal(self.interface.data)
+
+    async def _driver_cleanup(self):
+        self.interface.val.setimmediatevalue(0)
+
+class ValRdyConsumer[Data: SVStruct](ValRdyDriver[Data]):
+    def _get_name(self):
+        return self.interface.consumer_name.replace(' ', '')
+
+    @staticmethod
+    def _driving_mode() -> str:
+        return 'consumer'
+
+    async def dequeue_value(self) -> Data:
+        return await self.queue.get()
+
+    async def dequeue_values(self, n: int=-1) -> AsyncGenerator[Data]:
+        count = 0
+
+        while count != n:
+            next = await self.dequeue_value()
+            count += 1
+            yield next
+
+    async def _driver_setup(self):
+        self.interface.rdy.value = 0
+
+    async def _driver_on_rising_edge(self):
+        if self.interface.rdy.value == 1 and self.interface.val.value == 1:
+            self.queue.put_nowait(self.bus_data_type.from_signal(self.interface.data))
+        
+        await FallingEdge(top.clk)
+        
+        can_consume = self.enabled and not self.queue.full()
+        if self.interface.rdy_is_ack:
+            self.interface.rdy.value = self.interface.val.value == 1 and can_consume
+        else:
+            self.interface.rdy.value = can_consume
+
+    async def _driver_cleanup(self):
+        self.interface.rdy.setimmediatevalue(0)
+
+class AbstractTB(AbstractAsyncContextManager):
+    logger: Logger
+    clock_task: Task
+    tasks: Mapping[str, TBTask]
+
+    def __init__(
+        self,
+        dut: SimHandleBase,
+        tasks: Mapping[str, TBTask]=dict(),
+    ):
+        super().__init__()
+
+        self.logger = LOGGER.getChild(self.__class__.__name__)
+        self.clock_task = cocotb.create_task(Clock(dut.clk, 10, 'ns').start())
+        
+        self.tasks = tasks
+
+        for k, v in self.tasks.items():
+            setattr(self, k, v)
+
+    @override
+    async def __aenter__(self) -> Self:
+        self.logger.info("Setting up TB...")
+
+        await cocotb.start(self.clock_task)
+        await reset()
+
+        for task in self.tasks.values():
+            await task.start()
+
+        self.logger.info("TB setup done")
+
+        return self
+
+    @override
+    async def __aexit__(self, exc_type, exc_value, traceback) -> bool:
+        self.logger.info(f"Cleaning up...")
+        
+        for task in self.tasks.values():
+            await task.stop()
+
+        self.clock_task.kill()
+
+        self.logger.info(f"Cleanup done")
+
+        return False
+
 
 async def reset():
     top._log.info("Asserting reset signal")

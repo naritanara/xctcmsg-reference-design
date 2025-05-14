@@ -1,99 +1,118 @@
+from typing import AsyncGenerator, Self
+from typing_extensions import override
 import cocotb
-from cocotb.clock import Clock
-from cocotb.queue import Queue
 from cocotb.handle import SimHandleBase
 
-from cocotb_utils import reset, flush, RisingEdge, RisingEdges, SimulationUpdate
-from xctcmsg_pkg import InterfaceReceiveData, InterfaceSendData, Message, MessageMetadata, ReceiveQueueData
+from cocotb_utils import AbstractTB, PseudoSignal, TBTask, ValRdyConsumer, ValRdyInterface, ValRdyProducer
+from xctcmsg_pkg import InterfaceReceiveData, InterfaceSendData, Message
 
-class SingleBusEmulator:
-    dut: SimHandleBase
-
-    def __init__(self, dut):
-        self.dut = dut
-
-    async def start(self):
-        while True:
-            await SimulationUpdate()
-            self.dut.bus_val_i.value = self.dut.bus_val_o.value and int(self.dut.bus_dst_o.value) == 0
-            self.dut.bus_ack_i.value = self.dut.bus_val_i.value and self.dut.bus_rdy_o.value
-            self.dut.bus_src_i.value = 0
-            self.dut.bus_tag_i.value = self.dut.bus_tag_o.value
-            self.dut.bus_msg_i.value = self.dut.bus_msg_o.value
-
-class InterfaceController:
-    dut: SimHandleBase
-    send_queue: Queue[InterfaceSendData]
-    recv_queue: Queue[InterfaceReceiveData]
-
-    def __init__(self, dut):
-        self.dut = dut
-        self.send_queue = Queue()
-        self.recv_queue = Queue()
-
-    async def send(self, send_data: Message | InterfaceSendData):
-        if isinstance(send_data, Message):
-            send_data = InterfaceSendData(send_data)
-        
-        await self.send_queue.put(send_data)
-
-    async def receive(self) -> Message:
-        return (await self.recv_queue.get()).message
-
-    async def start(self):
-        self.dut.loopback_interface_valid.value = 0
-        while True:
-            await RisingEdge()
-
-            if self.dut.loopback_interface_valid.value == 1:
-                self.dut.loopback_interface_valid.value = not self.dut.interface_loopback_ready.value
-
-            if self.dut.loopback_interface_valid.value == 0 and not self.send_queue.empty():
-                send_data = self.send_queue.get_nowait()
-                self.dut.loopback_interface_valid.value = 1
-                send_data.write_to_signal(self.dut.loopback_interface_data)
-                self.dut._log.info(f"Sent: {send_data}")
-
-            if self.dut.interface_loopback_valid.value and not self.recv_queue.full():
-                receive_data = InterfaceReceiveData.from_signal(self.dut.interface_loopback_data)
-                self.recv_queue.put_nowait(receive_data)
-                self.dut._log.info(f"Received: {receive_data}")
-
-            self.dut.loopback_interface_ready.value = not self.recv_queue.full()
-
-async def setup(dut):
-    bus = SingleBusEmulator(dut)
-    controller = InterfaceController(dut)
-
-    await cocotb.start(Clock(dut.clk, 10, 'ns').start())
-    await reset()
-
-    await cocotb.start(bus.start())
-    await cocotb.start(controller.start())
+class LoopbackBusEmulator(TBTask):
+    dut_output_consumer: ValRdyConsumer[Message]
+    dut_input_producer: ValRdyProducer[Message]
     
-    return bus, controller
+    def __init__(self, dut: SimHandleBase):
+        dut_output_pseudo = PseudoSignal(dut,
+            {
+                'meta': {
+                    'tag': 'bus_tag_o',
+                    'address': 'bus_dst_o',
+                },
+                'data': 'bus_msg_o',
+            }
+        )
+        dut_input_pseudo = PseudoSignal(dut,
+            {
+                'meta': {
+                    'tag': 'bus_tag_i',
+                    'address': 'bus_src_i',
+                },
+                'data': 'bus_msg_i',
+            }
+        )
+        
+        dut_output_interface = ValRdyInterface(
+            val=dut.bus_val_o,
+            rdy=dut.bus_ack_i,
+            rdy_is_ack=True,
+            data=dut_output_pseudo,
+            consumer_name="Loopback Bus",
+        )
+        dut_input_interface = ValRdyInterface(
+            val=dut.bus_val_i,
+            rdy=dut.bus_rdy_o,
+            data=dut_input_pseudo,
+            producer_name="Loopback Bus",
+        )
+        
+        self.dut_output_consumer = ValRdyConsumer(dut_output_interface, Message)
+        self.dut_input_producer = ValRdyProducer(dut_input_interface, Message)
+        
+        super().__init__(use_kill=True, subtasks=[self.dut_output_consumer, self.dut_input_producer])
+    
+    async def _task_coroutine(self):
+        async for message in self.dut_output_consumer.dequeue_values():
+            await self.dut_input_producer.enqueue_values(message)
+
+class BusCommunicationInterfaceTB(AbstractTB):
+    send_port: ValRdyProducer[InterfaceSendData]
+    recv_port: ValRdyConsumer[InterfaceReceiveData]
+    bus: LoopbackBusEmulator
+    
+    def __init__(self, dut: SimHandleBase):
+        send_port_interface = ValRdyInterface(
+            val=dut.loopback_interface_valid,
+            rdy=dut.interface_loopback_ready,
+            data=dut.loopback_interface_data,
+            producer_name="Loopback Interceptor",
+        )
+        recv_port_interface = ValRdyInterface(
+            val=dut.interface_loopback_valid,
+            rdy=dut.loopback_interface_ready,
+            data=dut.interface_loopback_data,
+            consumer_name="Loopback Interceptor",
+        )
+        
+        tasks = dict(
+            send_port=ValRdyProducer(send_port_interface, InterfaceSendData),
+            recv_port=ValRdyConsumer(recv_port_interface, InterfaceReceiveData),
+        )
+        
+        super().__init__(dut, tasks)
+        
+        self.bus = LoopbackBusEmulator(dut)
+    
+    @override
+    async def __aenter__(self) -> Self:
+        await self.bus.start()
+        return await super().__aenter__()
+    
+    @override
+    async def __aexit__(self, exc_type, exc_val, exc_tb):
+        await self.bus.stop()
+        return await super().__aexit__(exc_type, exc_val, exc_tb)
+    
+    async def send(self, *messages: Message):
+        await self.send_port.enqueue_values(*map(InterfaceSendData, messages))
+    
+    async def receive(self, n: int=-1) -> AsyncGenerator[Message, None]:
+        async for data in self.recv_port.dequeue_values(n):
+            yield data.message
 
 @cocotb.test
 async def reset_state(dut):
-    await cocotb.start(Clock(dut.clk, 10, 'ns').start())
-
-    await reset()
-
-    assert dut.holding_valid.value == 0
+    async with BusCommunicationInterfaceTB(dut):
+        assert dut.holding_valid.value == 0
 
 @cocotb.test
 async def echo_test(dut):
-    bus, controller = await setup(dut)
-    
     messages = [
-        Message(MessageMetadata(42, 0), 55),
-        Message(MessageMetadata(55, 0), 42),
-        Message(MessageMetadata(0, 0), 0)
+        Message.quick(0, 42, 55),
+        Message.quick(0, 55, 42),
+        Message.quick(0, 0, 0),
     ]
     
-    for message in messages:
-        await controller.send(message)
-
-    for message in messages:
-        received_message = await controller.receive()
-        assert received_message == message
+    async with BusCommunicationInterfaceTB(dut) as tb:
+        await tb.send(*messages)
+        
+        received_messages = [x async for x in tb.receive(len(messages))]
+        assert received_messages == messages

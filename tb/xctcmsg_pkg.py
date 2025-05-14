@@ -1,6 +1,5 @@
 from enum import IntEnum
 
-from cocotb.types.logic_array import LogicArray
 
 from cocotb_utils import SVStruct, CheckedLogicArray
 

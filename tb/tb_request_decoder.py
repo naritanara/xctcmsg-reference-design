@@ -1,11 +1,8 @@
 from enum import Enum
-import cocotb
 from cocotb.regression import TestFactory
-from cocotb.triggers import Timer
-from cocotb.types import LogicArray, Range
 
 from cocotb_utils import SimulationUpdate
-from xctcmsg_pkg import MessageMetadata, RequestData, RequestType, SendQueueData, UnitTestPassthrough, Message, ReceiveQueueData
+from xctcmsg_pkg import RequestData, RequestType, SendQueueData, ReceiveQueueData
 
 
 class TargetQueue(Enum):
@@ -54,16 +51,16 @@ async def decode_test(dut, request_data, expected_queue_data):
 tf = TestFactory(test_function=decode_test)
 tf.add_option(('request_data', 'expected_queue_data'), [
     (
-        RequestData(RequestType.SEND, 255, (42 << 32) | 10, UnitTestPassthrough(23)),
-        SendQueueData(Message(MessageMetadata(42, 10), 255), UnitTestPassthrough(23)),
+        RequestData.quick(RequestType.SEND, 255, (42 << 32) | 10, 23),
+        SendQueueData.quick(10, 42, 255, 23),
     ),
     (
-        RequestData(RequestType.RECV, (42 << 32) | 10, (1 << 32) | 2, UnitTestPassthrough(23)),
-        ReceiveQueueData(False, MessageMetadata(42, 10), MessageMetadata(~1, ~2), UnitTestPassthrough(23)),
+        RequestData.quick(RequestType.RECV, (42 << 32) | 10, (1 << 32) | 2, 23),
+        ReceiveQueueData.quick(10, 42, ~2, ~1, 23, False),
     ),
     (
-        RequestData(RequestType.AVAIL, (42 << 32) | 10, (1 << 32) | 2, UnitTestPassthrough(23)),
-        ReceiveQueueData(True, MessageMetadata(42, 10), MessageMetadata(~1, ~2), UnitTestPassthrough(23)),
+        RequestData.quick(RequestType.AVAIL, (42 << 32) | 10, (1 << 32) | 2, 23),
+        ReceiveQueueData.quick(10, 42, ~2, ~1, 23, True),
     )
 ])
 tf.generate_tests()
