@@ -1,4 +1,5 @@
 import itertools
+from os import environ
 from typing import AsyncGenerator, ContextManager, Tuple, override
 import cocotb
 from cocotb.handle import SimHandleBase
@@ -6,6 +7,9 @@ from cocotb.clock import Clock
 from cocotb.queue import Queue
 
 from cocotb_utils import AbstractTB, PseudoSignal, QueueState, RisingEdgesHoldingAssertion, TBTask, ValRdyConsumer, ValRdyInterface, ValRdyProducer, reset, flush, RisingEdge, RisingEdges, SimulationUpdate
+from adapters import NetworkInterfaceDriver, ValRdyNetworkInterfaceDriver
+from adapters.bus import BusInterfaceDriver
+from adapters.openpiton import OpenpitonInterfaceDriver
 from xctcmsg_pkg import RequestData, RequestType, WritebackArbiterData, Message
 
 MESSAGE_BUFFER_SIZE = 4
@@ -80,124 +84,23 @@ class WBStageEmulator:
             self.writeback_queue.put_nowait(data)
             self.dut._log.info(f"Writeback out: {data}")
 
-class BusEmulator:
-    dut: SimHandleBase
-    send_queue: Queue[Message]
-    allow_receive: bool = True
-    receive_queue: Queue[Message]
-
-    def __init__(self, dut: SimHandleBase):
-        self.dut = dut
-        self.send_queue = Queue()
-        self.receive_queue = Queue()
-
-    async def send(self, *items: Message):
-        for item in items:
-            await self.send_queue.put(item)
-
-    async def receive(self) -> Message:
-        return await self.receive_queue.get()
-
-    async def start(self):
-        dut_bus_i = PseudoSignal(self.dut,
-            {
-                'meta': {
-                    'tag': 'bus_tag_i',
-                    'address': 'bus_src_i',
-                },
-                'data': 'bus_msg_i'
-            }
-        )
-        dut_bus_o = PseudoSignal(self.dut,
-            {
-                'meta': {
-                    'tag': 'bus_tag_o',
-                    'address': 'bus_dst_o',
-                },
-                'data': 'bus_msg_o'
-            }
-        )
-
-        while True:
-            await RisingEdge()
-            await SimulationUpdate()
-
-            self.dut.bus_ack_i.value = 0
-            if (self.allow_receive):
-                if (self.dut.bus_val_o.value == 1):
-                    if (not self.receive_queue.full()):
-                        self.dut.bus_ack_i.value = 1
-                        data = Message.from_signal(dut_bus_o)
-                        self.receive_queue.put_nowait(data)
-                        self.dut._log.info(f"Bus out: {data}")
-
-            await SimulationUpdate()
-
-            self.dut.bus_val_i.value = 0
-            if (self.dut.bus_rdy_o.value == 1):
-                if (not self.send_queue.empty()):
-                    data = self.send_queue.get_nowait()
-                    self.dut.bus_val_i.value = 1
-                    data.write_to_signal(dut_bus_i)
-                    self.dut._log.info(f"Bus in: {data}")
-
-async def setup(dut: SimHandleBase) -> Tuple[RRStageEmulator, WBStageEmulator, BusEmulator]:
-    rr_stage = RRStageEmulator(dut)
-    wb_stage = WBStageEmulator(dut)
-    bus = BusEmulator(dut)
-
-    dut.local_address.value = 0;
-    await cocotb.start(Clock(dut.clk, 10, 'ns').start())
-    await reset()
-
-    await cocotb.start(rr_stage.start())
-    await cocotb.start(wb_stage.start())
-    await cocotb.start(bus.start())
-
-    return (rr_stage, wb_stage, bus)
-
-async def finish_test(dut: SimHandleBase, rr_stage: RRStageEmulator, wb_stage: WBStageEmulator, bus: BusEmulator):
-    dut._log.info("Cleaning up")
-
-    dut.rr_xctcmsg_valid.value = 0
-    dut.bus_ack_i.value = 0
-    dut.bus_val_i.value = 0
-    dut.wb_xctcmsg_ready.value = 0
-
-    await SimulationUpdate()
-
-    while not rr_stage.request_queue.empty():
-        rr_stage.request_queue.get_nowait()
-
-    while not wb_stage.writeback_queue.empty():
-        wb_stage.writeback_queue.get_nowait()
-
-    while not bus.send_queue.empty():
-        bus.send_queue.get_nowait()
-
-    while not bus.receive_queue.empty():
-        bus.receive_queue.get_nowait()
-
 class EchoingBusDriver(TBTask):
-    bus_out: ValRdyConsumer[Message]
-    bus_in: ValRdyProducer[Message]
+    network_interface_driver: NetworkInterfaceDriver
     
-    def __init__(self, bus_out: ValRdyConsumer[Message], bus_in: ValRdyProducer[Message]):
+    def __init__(self, network_interface_driver: NetworkInterfaceDriver):
         super().__init__(use_kill=True)
-        
-        self.bus_out = bus_out
-        self.bus_in = bus_in
+
+        self.network_interface_driver = network_interface_driver
     
     @override
     async def _task_coroutine(self):
-        async for message in self.bus_out.dequeue_values():
-            await self.bus_in.enqueue_values(message)
+        async for message in self.network_interface_driver.get_sent():
+            await self.network_interface_driver.receive(message)
 
 class XctcmsgTB(AbstractTB):
     rr_stage: ValRdyProducer[RequestData]
     wb_stage: ValRdyConsumer[WritebackArbiterData]
-    bus_out: ValRdyConsumer[Message]
-    bus_in: ValRdyProducer[Message]
+    network_interface_driver: NetworkInterfaceDriver
     echoing_bus_driver: EchoingBusDriver
     
     def __init__(self, dut: SimHandleBase, *, with_echoing_bus_driver: bool=False):
@@ -210,20 +113,6 @@ class XctcmsgTB(AbstractTB):
         wb_stage_pseudo = PseudoSignal(dut, {
             'value': 'xctcmsg_wb_value',
             'passthrough': 'xctcmsg_wb_passthrough',
-        })
-        bus_out_pseudo = PseudoSignal(dut, {
-            'meta': {
-                'tag': 'bus_tag_o',
-                'address': 'bus_dst_o',
-            },
-            'data': 'bus_msg_o',
-        })
-        bus_in_pseudo = PseudoSignal(dut, {
-            'meta': {
-                'tag': 'bus_tag_i',
-                'address': 'bus_src_i',
-            },
-            'data': 'bus_msg_i',
         })
         
         rr_stage_interface = ValRdyInterface(
@@ -238,29 +127,23 @@ class XctcmsgTB(AbstractTB):
             data=wb_stage_pseudo,
             consumer_name='WB Stage',
         )
-        bus_out_interface = ValRdyInterface(
-            val=dut.bus_val_o,
-            rdy=dut.bus_ack_i,
-            rdy_is_ack=True,
-            data=bus_out_pseudo,
-            consumer_name='C2C Network',
-        )
-        bus_in_interface = ValRdyInterface(
-            val=dut.bus_val_i,
-            rdy=dut.bus_rdy_o,
-            data=bus_in_pseudo,
-            producer_name='C2C Network',
-        )
+        
+        match environ['XCTCMSG_NETWORK_IMPLEMENTATION']:
+            case 'bus':
+                network_interface_driver = BusInterfaceDriver(dut)
+            case 'openpiton':
+                network_interface_driver = OpenpitonInterfaceDriver(dut)
+            case x:
+                raise ValueError(f"Unknown network implementation: {x}")
         
         tasks = dict[str,TBTask](
             rr_stage=ValRdyProducer(rr_stage_interface, RequestData),
             wb_stage=ValRdyConsumer(wb_stage_interface, WritebackArbiterData),
-            bus_out=ValRdyConsumer(bus_out_interface, Message),
-            bus_in=ValRdyProducer(bus_in_interface, Message),
+            network_interface_driver=network_interface_driver,
         )
         
         if with_echoing_bus_driver:
-            tasks['echoing_bus_driver'] = EchoingBusDriver(tasks['bus_out'], tasks['bus_in'])
+            tasks['echoing_bus_driver'] = EchoingBusDriver(network_interface_driver)
         
         super().__init__(dut, tasks)
         
@@ -270,7 +153,7 @@ class XctcmsgTB(AbstractTB):
         return self.wb_stage.disabled()
     
     def no_messages_out(self) -> ContextManager:
-        return self.bus_out.disabled()
+        return self.network_interface_driver.disable_sends()
     
     @property
     def wb_stage_queue_state(self) -> QueueState:
@@ -286,13 +169,13 @@ class XctcmsgTB(AbstractTB):
         return self.wb_stage.dequeue_values(n)
     
     async def send(self, *message: Message):
-        await self.bus_in.enqueue_values(*message)
+        await self.network_interface_driver.receive(*message)
     
     async def receive_single(self) -> Message:
-        return await self.bus_out.dequeue_value()
+        return await self.network_interface_driver.get_single_sent()
     
     def receive(self, n: int=-1) -> AsyncGenerator[Message]:
-        return self.bus_out.dequeue_values(n)
+        return self.network_interface_driver.get_sent(n)
 
     async def poll_until_available(self, source: int, tag: int, source_mask: int, tag_mask: int, rd: int):
         request = RequestData.quick(RequestType.AVAIL, source | (tag << 32), source_mask | (tag_mask << 32), rd)
@@ -310,15 +193,17 @@ class XctcmsgTB(AbstractTB):
 
 @cocotb.test
 async def reset_state(dut):
-    async with XctcmsgTB(dut):
+    async with XctcmsgTB(dut) as tb:
         # Ready signal could be unasserted if a request type is not given
         dut.rr_xctcmsg_funct3.value = 0b000;
         await SimulationUpdate()
     
         assert dut.xctcmsg_rr_ready.value == 1
-        assert dut.bus_val_o.value == 0
-        assert dut.bus_rdy_o.value == 1
         assert dut.xctcmsg_wb_valid.value == 0
+        
+        if isinstance(tb.network_interface_driver, ValRdyNetworkInterfaceDriver):
+            assert tb.network_interface_driver.send_port.interface.val.value == 0
+            assert tb.network_interface_driver.recv_port.interface.rdy.value == 1
 
 @cocotb.test
 async def flush_test(dut):
@@ -512,11 +397,6 @@ async def stream_loopback_speed(dut):
         recv_writebacks = [x for x in writebacks if x in expected_recv_writebacks]
         assert all(map(lambda x: x in recv_writebacks, expected_recv_writebacks))
 
-async def echo_server(bus: BusEmulator):
-    while True:
-        message = await bus.receive()
-        await bus.send(message)
-
 @cocotb.test
 async def stream_echo_spaced(dut):
     async with XctcmsgTB(dut, with_echoing_bus_driver=True) as tb:
@@ -617,24 +497,34 @@ async def stream_mixed_speed(dut):
 async def avoid_send_stall(dut):
     AVAIL_REQUESTS = 5
 
-    send_requests = [
-        # This request gets to stay in the holding registers
-        RequestData.quick(RequestType.SEND, 5, 10 | (42 << 32), 1),
-        # This request will stall
-        RequestData.quick(RequestType.SEND, 5, 10 | (42 << 32), 2),
-    ]
-    send_requests_expected_writebacks = [
-        WritebackArbiterData.quick(1, 1),
-        WritebackArbiterData.quick(2, 1),
-    ]
+    if environ['XCTCMSG_NETWORK_IMPLEMENTATION'] == 'bus':
+        send_requests = [
+            # This request gets to stay in the holding registers
+            RequestData.quick(RequestType.SEND, 5, 10 | (42 << 32), 1),
+            # This request will stall
+            RequestData.quick(RequestType.SEND, 5, 10 | (42 << 32), 2),
+        ]
+        send_requests_expected_writebacks = [
+            WritebackArbiterData.quick(1, 1),
+            WritebackArbiterData.quick(2, 1),
+        ]
+    else:
+        send_requests = [
+            # This request will stall
+            RequestData.quick(RequestType.SEND, 5, 10 | (42 << 32), 2),
+        ]
+        send_requests_expected_writebacks = [
+            WritebackArbiterData.quick(2, 1),
+        ]
+
     avail_requests = [RequestData.quick(RequestType.AVAIL, 10 | (42 << 32), 0, x+2) for x in range(AVAIL_REQUESTS)]
     avail_requests_expected_writebacks = [WritebackArbiterData.quick(x+2, 0) for x in range(AVAIL_REQUESTS)]
     
     requests = itertools.chain(send_requests, avail_requests)
     expected_writebacks = list(itertools.chain(
-        send_requests_expected_writebacks[0:1],
+        send_requests_expected_writebacks[-2:-1],
         avail_requests_expected_writebacks,
-        send_requests_expected_writebacks[1:2],
+        send_requests_expected_writebacks[-1:],
     ))
     
     async with XctcmsgTB(dut, with_echoing_bus_driver=True) as tb:

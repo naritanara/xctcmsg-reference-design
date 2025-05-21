@@ -81,6 +81,7 @@ async def reset_state(dut):
 @cocotb.test
 async def flush_test(dut):
     request = SendQueueData.quick(0, 0, 0, 1)
+    expected_sent_message = Message.quick(0, 0, 0)
     
     async with PostofficeTB(dut) as tb:
         with tb.no_writebacks():
@@ -98,13 +99,23 @@ async def flush_test(dut):
         
         assert tb.writeback_queue_state == QueueState.EMPTY
         
+        sent_message = await tb.get_sent_message()
+        assert sent_message == expected_sent_message
+        
 @cocotb.test
 async def writeback_storage(dut):
     requests = [
         SendQueueData.quick(10, 42, 5, 1),
         SendQueueData.quick(20, 24, 6, 2), # This one will be blocked
     ]
-    expected_writeback = WritebackArbiterData.quick(1, 1)
+    expected_writebacks = [
+        WritebackArbiterData.quick(1, 1),
+        WritebackArbiterData.quick(2, 1)
+    ]
+    expected_sent_messages = [
+        Message.quick(10, 42, 5),
+        Message.quick(20, 24, 6)
+    ]
 
     async with PostofficeTB(dut) as tb:
         with tb.no_writebacks():
@@ -115,11 +126,15 @@ async def writeback_storage(dut):
             assert dut.writeback_valid.value == 1
 
         writeback = await tb.get_writeback()
-        assert writeback == expected_writeback
+        assert writeback == expected_writebacks[0]
 
         await RisingEdges(20)
 
-        assert tb.writeback_queue_state != QueueState.EMPTY
+        writeback = await tb.get_writeback()
+        assert writeback == expected_writebacks[1]
+        
+        sent_messages = [x async for x in tb.get_sent_messages(2)]
+        assert sent_messages == expected_sent_messages
 
 @cocotb.test
 async def send_single(dut):

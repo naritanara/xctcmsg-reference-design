@@ -1,5 +1,11 @@
 import xctcmsg_pkg::*;
 
+// Needed for adapter interfaces to be visible
+`ifndef VERILATOR
+`include "bus_adapter.sv"
+`include "openpiton_adapter.sv"
+`endif
+
 module xctcmsg #(
     parameter MAX_HARTID = 64,
     parameter SEND_QUEUE_SIZE = 4,
@@ -20,19 +26,8 @@ module xctcmsg #(
     input logic [63:0] rr_xctcmsg_rs2,
     input exe_stage_passthrough_t rr_xctcmsg_passthrough,
 
-    // Bus send
-    output logic bus_val_o,
-    input logic bus_ack_i,
-    output logic [31:0] bus_dst_o,
-    output logic [31:0] bus_tag_o,
-    output logic [63:0] bus_msg_o,
-
-    // Bus receive
-    output logic bus_rdy_o,
-    input logic bus_val_i,
-    input logic [31:0] bus_src_i,
-    input logic [31:0] bus_tag_i,
-    input logic [63:0] bus_msg_i,
+    // Network interface
+    `NETWORK_INTERFACE,
 
     // WB-stage
     output logic xctcmsg_wb_valid,
@@ -141,7 +136,7 @@ module xctcmsg #(
     commit_safety_unit commit_safety_unit (.*);
 
     loopback_interceptor loopback_interceptor (.*);
-    bus_communication_interface bus_communication_interface (.*);
+    `NETWORK_ADAPTER network_adapter (.*);
 
     writeback_arbiter writeback_arbiter (.*);
 

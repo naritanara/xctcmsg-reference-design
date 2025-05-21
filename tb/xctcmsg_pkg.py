@@ -51,3 +51,6 @@ class InterfaceReceiveData(SVStruct):
 
 class CommitSafetyRequest(SVStruct):
     payload: CheckedLogicArray = CheckedLogicArray(1)
+
+class OpenpitonData(SVStruct, quick_args=['raw']):
+    raw: CheckedLogicArray = CheckedLogicArray(192)

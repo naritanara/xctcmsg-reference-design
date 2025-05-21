@@ -2,7 +2,7 @@ from typing import AsyncGenerator, ContextManager
 import cocotb
 from cocotb.handle import SimHandleBase
 
-from cocotb_utils import AbstractTB, QueueState, RisingEdgesHoldingAssertion, ValRdyConsumer, ValRdyInterface, ValRdyProducer, flush, RisingEdges
+from cocotb_utils import AbstractTB, QueueState, RisingEdge, RisingEdgesHoldingAssertion, ValRdyConsumer, ValRdyInterface, ValRdyProducer, flush, RisingEdges
 from xctcmsg_pkg import InterfaceReceiveData, ReceiveQueueData, Message, WritebackArbiterData
 
 MESSAGE_BUFFER_SIZE = 4
@@ -102,7 +102,7 @@ async def message_storage(dut):
     assert len(messages) == MESSAGE_BUFFER_SIZE + 1, "there should be just enough messages to overflow the buffers"
     
     async with MBoxTB(dut) as tb:
-        with tb.no_writebacks():    
+        with tb.no_writebacks():
             await tb.receive(*messages)
             
             await RisingEdges(20)
@@ -114,6 +114,10 @@ async def message_storage(dut):
     
             assert dut.mailbox_loopback_ready.value == 0
             assert tb.receive_queue_state != QueueState.EMPTY
+            
+            # Invalidate every message to absorb the stalled one
+            dut.message_valid.value = 0
+            await RisingEdge()
 
 @cocotb.test
 async def request_storage(dut):
@@ -133,6 +137,10 @@ async def request_storage(dut):
             assert buffered_request_data == requests[0]
     
             assert dut.mailbox_receive_queue_ready.value == 0
+            
+            # Invalidate the request to absorb the stalled one
+            dut.request_valid.value = 0
+            await RisingEdges(2)
 
 @cocotb.test
 async def full_match_single(dut):

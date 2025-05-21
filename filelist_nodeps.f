@@ -1,6 +1,8 @@
++incdir+./rtl/adapters
 ./includes/xctcmsg_pkg.sv
 ./rtl/loopback_interceptor.sv
-./rtl/bus_communication_interface.sv
+./rtl/adapters/bus_adapter.sv
+./rtl/adapters/openpiton_adapter.sv
 ./rtl/mbox.sv
 ./rtl/postoffice.sv
 ./rtl/request_decoder.sv

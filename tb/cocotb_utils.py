@@ -3,17 +3,22 @@ from enum import Enum
 import logging
 
 from logging import Logger
-from typing import AsyncGenerator, Awaitable, Callable, Mapping, Optional, override, ClassVar, Dict, Iterable, Self, Type, Any
+from re import sub
+import sys
+from types import TracebackType
+from typing import AsyncGenerator, Awaitable, Callable, Literal, Mapping, MutableMapping, Optional, Protocol, override, ClassVar, Dict, Iterable, Self, Type, Any, runtime_checkable
 from functools import reduce
 from abc import ABC, abstractmethod
 from dataclasses import dataclass, fields
 
 import cocotb
 
+from cocotb.binary import BinaryValue
 from cocotb.handle import SimHandleBase
 from cocotb.queue import Queue
 from cocotb.task import Task
-from cocotb.triggers import FallingEdge, Timer
+from cocotb.triggers import FallingEdge, Timer, Trigger
+from cocotb.types.logic import Logic
 from cocotb.utils import Decimal
 from cocotb import triggers
 from cocotb import top
@@ -271,7 +276,9 @@ class SVStruct():
 
             ret += f'{field_name}='
             if isinstance(attr, LogicArray):
-                if len(attr) == 1:
+                if not attr.is_resolvable:
+                    ret += attr.binstr
+                elif len(attr) == 1:
                     ret += 'T' if attr.integer == 1 else 'F'
                 elif len(attr) < 8:
                     ret += repr(attr.integer)
@@ -289,6 +296,177 @@ class SVStruct():
 
         return ret
 
+class TBCleanupException(ExceptionGroup):
+    def __new__(cls, exceptions, task_repr: Optional[str]=None, message: Optional[str]=None) -> Self:
+        if message is None:
+            exception_text = 'Exceptions' if len(exceptions) > 1 else 'An exception'
+            
+            if task_repr is not None:
+                message = f'{exception_text} occurred during cleanup of {task_repr}'
+            else:
+                message = f'{exception_text} occurred during cleanup of a task'
+
+        return super().__new__(cls, message, exceptions)
+    
+    def __init__(self, exceptions, task_repr: Optional[str]=None, message: Optional[str]=None):
+        pass
+
+class TBCleanupAssertionError(TBCleanupException):
+    def __new__(cls, exception: Exception, task_repr: str):
+        self = super().__new__(cls, [exception], message=f'A cleanup-stage assertion failed in {task_repr}')
+        return self
+
+class TBTaskFinalVerificationFailures(ExceptionGroup):
+    def derive(self, excs):
+        return TBTaskFinalVerificationFailures(self.message, excs)
+
+class TBTask(ABC):
+    __task: Task
+    __stop_event: Optional[triggers.Event]
+    subtasks: Iterable['TBTask']
+    
+    def __init__(self, *, use_kill: bool=False, subtasks: Iterable['TBTask']=[]):
+        self.__task = cocotb.create_task(self._task_coroutine())
+        self.__stop_event = None if use_kill else triggers.Event()
+        self.subtasks = subtasks
+    
+    @property
+    def _stop_event(self) -> triggers.Event:
+        if self.__stop_event is None:
+            raise ValueError("There is no stop event, this task must be killed")
+        return self.__stop_event
+    
+    @abstractmethod
+    async def _task_coroutine(self):
+        pass
+    
+    async def start(self):
+        for task in self.subtasks:
+            await task.start()
+            
+        await cocotb.start(self.__task)
+    
+    # For verification of end conditions
+    async def on_test_finish(self):
+        pass
+
+    async def stop(self) -> Optional[TBCleanupException]:
+        exceptions = []
+        subtask_raised = False
+        
+        if self.__stop_event is None:
+            self.__task.kill()
+        else:
+            self.__stop_event.set()
+            await self.__task.join()
+        
+        for task in self.subtasks:
+            e = await task.stop()
+            if e is not None:
+                exceptions.append(e)
+                subtask_raised = True
+        
+        try:
+            await self.on_test_finish()
+        except AssertionError as e:
+            exceptions.append(TBCleanupAssertionError(e, str(self)))
+        except Exception as e:
+            exceptions.append(TBCleanupException([e], str(self)))
+        
+        if len(exceptions) == 1 and not subtask_raised:
+            return exceptions[0]
+        
+        if exceptions:
+            return TBCleanupException(exceptions, str(self))
+
+# Abstract away clock details (clock could be a fake signal)
+class AbstractClock(TBTask):
+    period_ns: int
+    
+    def __init__(self, period_ns: int):
+        super().__init__()
+        
+        self.period_ns = period_ns
+    
+    @abstractmethod
+    def rising_edge(self) -> Trigger:
+        pass
+    
+    @abstractmethod
+    def falling_edge(self) -> Trigger:
+        pass
+
+class FakeClock(AbstractClock):
+    _rising_edge: triggers.Event
+    _falling_edge: triggers.Event
+    
+    def __init__(self, period_ns: int):
+        super().__init__(period_ns)
+        
+        self._rising_edge = triggers.Event()
+        self._falling_edge = triggers.Event()
+    
+    @override
+    async def _task_coroutine(self):
+        stop_trigger = self._stop_event.wait()
+        semi_period = Decimal(self.period_ns / 2)
+        state = True
+        
+        while not self._stop_event.is_set():
+            state = not state
+            
+            if state:
+                self._rising_edge.set()
+                self._rising_edge.clear()
+            else:
+                self._falling_edge.set()
+                self._falling_edge.clear()
+            
+            await triggers.First(triggers.Timer(semi_period, 'ns'), stop_trigger)
+    
+    @override
+    def rising_edge(self) -> Trigger:
+        return self._rising_edge.wait()
+    
+    @override
+    def falling_edge(self) -> Trigger:
+        return self._falling_edge.wait()
+
+class RealClock(AbstractClock):
+    task: Task
+    _rising_edge: Trigger
+    _falling_edge: Trigger
+    
+    def __init__(self, clk: SimHandleBase, period_ns: int):
+        super().__init__(period_ns)
+        
+        self.task = cocotb.create_task(Clock(clk, self.period_ns, 'ns').start())
+        self._rising_edge = triggers.RisingEdge(clk)
+        self._falling_edge = triggers.FallingEdge(clk)
+    
+    @override
+    async def _task_coroutine(self):
+        await cocotb.start(self.task)
+        
+        await self._stop_event.wait()
+
+        self.task.kill()
+    
+    @override
+    def rising_edge(self) -> Trigger:
+        return self._rising_edge
+    
+    @override
+    def falling_edge(self) -> Trigger:
+        return self._falling_edge
+
+@runtime_checkable
+class NeedsClock(Protocol):
+    clock: AbstractClock
+
+class ClockedTBTask(TBTask, NeedsClock):
+    clock: AbstractClock
+
 @dataclass
 class ValRdyInterface:
     val: SimHandleBase
@@ -303,43 +481,7 @@ class QueueState(Enum):
     PARTIAL = 1,
     FULL = 2,
 
-class TBTask(ABC):
-    __task: Task
-    __stop_event: Optional[triggers.Event]
-    __subtasks: Iterable['TBTask']
-    
-    def __init__(self, *, use_kill: bool=False, subtasks: Iterable['TBTask']=[]):
-        self.__task = cocotb.create_task(self._task_coroutine())
-        self.__stop_event = None if use_kill else triggers.Event()
-        self.__subtasks = subtasks
-    
-    @property
-    def _stop_event(self) -> triggers.Event:
-        if self.__stop_event is None:
-            raise ValueError("There is no stop event, this task must be killed")
-        return self.__stop_event
-    
-    @abstractmethod
-    async def _task_coroutine(self):
-        pass
-    
-    async def start(self):
-        for task in self.__subtasks:
-            await task.start()
-            
-        await cocotb.start(self.__task)
-
-    async def stop(self):
-        if self.__stop_event is None:
-            self.__task.kill()
-        else:
-            self.__stop_event.set()
-            await self.__task.join()
-        
-        for task in self.__subtasks:
-            await task.stop()
-
-class ValRdyMonitor[Data: SVStruct](TBTask):
+class ValRdyMonitor[Data: SVStruct](ClockedTBTask):
     interface: ValRdyInterface
     bus_data_type: Type[Data]
 
@@ -356,18 +498,18 @@ class ValRdyMonitor[Data: SVStruct](TBTask):
     async def _task_coroutine(self):
         self.logger.info(f'Started monitoring the Valid-Ready interface between {self.interface.producer_name} and {self.interface.consumer_name}')
 
-        next_iteration_trigger = triggers.First(triggers.RisingEdge(top.clk), self._stop_event.wait())
+        next_iteration_trigger = triggers.First(self.clock.rising_edge(), self._stop_event.wait())
 
         while not self._stop_event.is_set():
             if self.interface.rdy.value == 1 and self.interface.val.value == 1:
                 value = self.bus_data_type.from_signal(self.interface.data)
-                self.logger.info(f"{self.interface.producer_name} -> {self.interface.consumer_name}: {value}")
+                self.logger.debug(f"{self.interface.producer_name} -> {self.interface.consumer_name}: {value}")
 
             await next_iteration_trigger
 
         self.logger.info(f'Stopped monitoring the Valid-Ready interface between {self.interface.producer_name} and {self.interface.consumer_name}')
 
-class ValRdyDriver[Data: SVStruct](TBTask):
+class ValRdyDriver[Data: SVStruct](ClockedTBTask):
     interface: ValRdyInterface
     bus_data_type: Type[Data]
     enabled: bool
@@ -408,7 +550,7 @@ class ValRdyDriver[Data: SVStruct](TBTask):
     async def _task_coroutine(self):
         self.logger.info(f'Started driving the Valid-Ready interface as a {self._driving_mode()}')
 
-        next_iteration_trigger = triggers.First(triggers.RisingEdge(top.clk), self._stop_event.wait())
+        next_iteration_trigger = triggers.First(self.clock.rising_edge(), self._stop_event.wait())
 
         await self._driver_setup()
         await SimulationUpdate()
@@ -426,6 +568,10 @@ class ValRdyDriver[Data: SVStruct](TBTask):
     async def start(self):
         await super().start()
         await self.ready_event.wait()
+    
+    @override
+    async def on_test_finish(self):
+        assert self.queue_state == QueueState.EMPTY, f"There are elements left in a ValRdyDriver queue: {self.queue}"
 
     @abstractmethod
     def _get_name(self):
@@ -479,7 +625,7 @@ class ValRdyProducer[Data: SVStruct](ValRdyDriver[Data]):
         if self.interface.rdy.value == 1 and self.interface.val.value == 1:
             self.interface.val.value = 0
         
-        await FallingEdge(top.clk)
+        await self.clock.falling_edge()
         
         if self.interface.val.value == 0 and self.enabled and not self.queue.empty():
             self.interface.val.value = 1
@@ -514,7 +660,7 @@ class ValRdyConsumer[Data: SVStruct](ValRdyDriver[Data]):
         if self.interface.rdy.value == 1 and self.interface.val.value == 1:
             self.queue.put_nowait(self.bus_data_type.from_signal(self.interface.data))
         
-        await FallingEdge(top.clk)
+        await self.clock.falling_edge()
         
         can_consume = self.enabled and not self.queue.full()
         if self.interface.rdy_is_ack:
@@ -525,10 +671,14 @@ class ValRdyConsumer[Data: SVStruct](ValRdyDriver[Data]):
     async def _driver_cleanup(self):
         self.interface.rdy.setimmediatevalue(0)
 
+class TBFailure(ExceptionGroup):
+    def derive(self, excs):
+        return TBFailure(self.message, excs)
+
 class AbstractTB(AbstractAsyncContextManager):
     logger: Logger
-    clock_task: Task
-    tasks: Mapping[str, TBTask]
+    tasks: MutableMapping[str, TBTask]
+    clock: AbstractClock
 
     def __init__(
         self,
@@ -538,35 +688,93 @@ class AbstractTB(AbstractAsyncContextManager):
         super().__init__()
 
         self.logger = LOGGER.getChild(self.__class__.__name__)
-        self.clock_task = cocotb.create_task(Clock(dut.clk, 10, 'ns').start())
         
-        self.tasks = tasks
+        self.tasks = dict()
+        
+        if hasattr(dut, 'clk'):
+            self.add_task('clock', RealClock(dut.clk, 10))
+        else:
+            self.add_task('clock', FakeClock(10))
 
-        for k, v in self.tasks.items():
-            setattr(self, k, v)
+        for id, task in tasks.items():
+            self.add_task(id, task)
+    
+    def __recursively_fullfill_needs_clock(self, task: TBTask):
+        if isinstance(task, NeedsClock):
+            setattr(task, 'clock', self.clock)
+        
+        for subtask in task.subtasks:
+            self.__recursively_fullfill_needs_clock(subtask)
+    
+    def add_task(self, id: str, task: TBTask):
+        if id in self.tasks:
+            raise ValueError(f'Task id [{id}] already in use')
+        self.tasks[id] = task
+        setattr(self, id, task)
+        
+        self.__recursively_fullfill_needs_clock(task)
 
     @override
     async def __aenter__(self) -> Self:
-        self.logger.info("Setting up TB...")
-
-        await cocotb.start(self.clock_task)
-        await reset()
-
-        for task in self.tasks.values():
-            await task.start()
-
-        self.logger.info("TB setup done")
+        setup_exceptions = []
+        
+        try:
+            self.logger.info("Setting up TB...")
+    
+            await reset()
+    
+            for task in self.tasks.values():
+                try:
+                    await task.start()
+                except Exception as e:
+                    setup_exceptions.append(e)
+    
+            self.logger.info("TB setup done")
+        except Exception as e:
+            setup_exceptions.append(e)
+        finally:
+            if setup_exceptions:
+                raise TBFailure('Test setup failed', setup_exceptions) from None
 
         return self
+    
+    async def __stop_tasks(self) -> Optional[TBTaskFinalVerificationFailures]:
+        cleanup_exceptions = []
+        
+        # We must ensure the clock is killed last, otherwise the simulator may
+        # detect a situation where no more signals are driven and crash
+        task_ids = list(self.tasks.keys())
+        if 'clock' in task_ids:
+            task_ids.remove('clock')
+            task_ids.append('clock')
+        
+        for id, task in [(id, self.tasks[id]) for id in task_ids]:
+            cleanup_exception = await task.stop()
+            if cleanup_exception:
+                cleanup_exception.add_note(f'Raised in task [{id}]')
+                cleanup_exceptions.append(cleanup_exception)
+        
+        if cleanup_exceptions:
+            exception_text = 'Exceptions' if len(cleanup_exceptions) > 1 else 'An exception'
+            return TBCleanupException(cleanup_exceptions, message=f'{exception_text} occurred during TB cleanup')
 
     @override
     async def __aexit__(self, exc_type, exc_value, traceback) -> bool:
         self.logger.info(f"Cleaning up...")
         
-        for task in self.tasks.values():
-            await task.stop()
-
-        self.clock_task.kill()
+        exceptions = []
+        if isinstance(exc_value, Exception):
+            exc_value.add_note('Raised in TB body')
+            if not isinstance(exc_value, AssertionError):
+                exc_value.add_note('CRITICAL: Not an assertion error, test may be ill defined')
+            exceptions.append(exc_value)
+        
+        final_verification_exceptions = await self.__stop_tasks()
+        if final_verification_exceptions:
+            exceptions.append(final_verification_exceptions)
+        
+        if exceptions:
+            raise TBFailure('Test failed', exceptions) from None
 
         self.logger.info(f"Cleanup done")
 
@@ -574,6 +782,9 @@ class AbstractTB(AbstractAsyncContextManager):
 
 
 async def reset():
+    if not hasattr(top, 'rst_n'):
+        return
+    
     top._log.info("Asserting reset signal")
     top.rst_n.value = 0
     await SimulationUpdate()
