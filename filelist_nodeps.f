@@ -1,5 +1,8 @@
++incdir+./includes
 +incdir+./rtl/adapters
+./includes/xctcmsg_cfg_pkg.sv
 ./includes/xctcmsg_pkg.sv
+./includes/xctcmsg_piton_pkg.sv
 ./rtl/loopback_interceptor.sv
 ./rtl/adapters/bus_adapter.sv
 ./rtl/adapters/openpiton_adapter.sv

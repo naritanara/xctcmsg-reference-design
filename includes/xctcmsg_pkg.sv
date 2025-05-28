@@ -1,21 +1,12 @@
 package xctcmsg_pkg;
 
-`ifdef XCTCMSG_SARGANTANA
-import drac_pkg::rr_exe_arith_instr_t;
-import drac_pkg::gl_index_t;
+import xctcmsg_cfg_pkg::*;
 
-typedef rr_exe_arith_instr_t exe_stage_passthrough_t;
-typedef gl_index_t commit_safety_request_payload_t;
-typedef gl_index_t commit_safety_control_unit_state_t;
-`else // Unit testing environment
-typedef struct packed {
-    logic [4:0] rd;
-} unit_test_passthrough_t;
+parameter type exe_stage_passthrough_t = xctcmsg_core_cfg::exe_stage_passthrough_t;
+parameter type commit_safety_request_payload_t = xctcmsg_core_cfg::commit_safety_request_payload_t;
+parameter type commit_safety_control_unit_state_t = xctcmsg_core_cfg::commit_safety_control_unit_state_t;
 
-typedef unit_test_passthrough_t exe_stage_passthrough_t;
-typedef logic commit_safety_request_payload_t;
-typedef logic commit_safety_control_unit_state_t;
-`endif
+parameter network_t NETWORK = xctcmsg_network_cfg::NETWORK;
 
 typedef struct packed {
   logic [2:0] funct3;

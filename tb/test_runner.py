@@ -22,7 +22,24 @@ class NetworkImplementation(StrEnum):
     OPENPITON = auto()
     
     def as_define(self) -> str:
-        return f'NETWORK_IMPLEMENTATION_{self.upper()}'
+        return f'XCTCMSG_NETWORK_{self.upper()}'
+    
+    def extra_defines(self) -> dict[str, object]:
+        match self:
+            case NetworkImplementation.OPENPITON:
+                return {
+                    'PITON_XCTCMSG_NOC_WIDTH': 192,
+                    'PITON_X_TILES': 1,
+                    'PITON_Y_TILES': 1,
+                }
+            case _:
+                return {}
+    
+    def as_defines(self) -> dict[str, object]:
+        return {
+            self.as_define(): 1,
+            **self.extra_defines(),
+        }
     
     def extra_include_paths(self, project_path: Path) -> List[Path]:
         match self:
@@ -93,7 +110,10 @@ def test_runner(runner: Simulator, project_path: Path, cocotb_test: CocotbTest, 
     runner.build(
         build_dir=f"sim_build/{runner.__class__.__name__}/{cocotb_test.build_dir(network_implementation)}",
         build_args=['-F', str(cocotb_test.resolve_test_filelist(project_path))],
-        defines={network_implementation.as_define(): 1},
+        defines={
+            'XCTCMSG_CORE_UNIT_TEST': 1,
+            **network_implementation.as_defines()
+        },
         includes=network_implementation.extra_include_paths(project_path),
         hdl_toplevel=cocotb_test.hdl_toplevel,
         waves=True,

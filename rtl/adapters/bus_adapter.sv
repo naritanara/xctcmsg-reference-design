@@ -1,23 +1,6 @@
-`ifdef NETWORK_IMPLEMENTATION_BUS
-
 import xctcmsg_pkg::*;
 
-`define NETWORK_ADAPTER bus_adapter
-
-`define NETWORK_INTERFACE       \
-  // Bus send                   \
-  output logic bus_val_o        \
-, input  logic bus_ack_i        \
-, output logic [31:0] bus_dst_o \
-, output logic [31:0] bus_tag_o \
-, output logic [63:0] bus_msg_o \
-                                \
-  // Bus receive                \
-, output logic bus_rdy_o        \
-, input  logic bus_val_i        \
-, input  logic [31:0] bus_src_i \
-, input  logic [31:0] bus_tag_i \
-, input  logic [63:0] bus_msg_i
+`include "xctcmsg_networks/bus.svh"
 
 module bus_adapter (
   input  logic clk,
@@ -33,7 +16,7 @@ module bus_adapter (
   input  logic loopback_interface_ready,
   output interface_receive_data_t interface_loopback_data,
 
-  `NETWORK_INTERFACE
+  `XCTCMSG_NETWORK_BUS_INTERFACE
 );
 
   // Registers to hold the message until accepted by the bus
@@ -89,5 +72,3 @@ module bus_adapter (
   end
 
 endmodule
-
-`endif

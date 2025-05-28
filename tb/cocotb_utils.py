@@ -3,6 +3,7 @@ from enum import Enum
 import logging
 
 from logging import Logger
+from os import environ
 from re import sub
 import sys
 from types import TracebackType
@@ -32,7 +33,9 @@ from cocotb.clock import Clock
 assert isinstance(top, SimHandleBase)
 
 LOGGER = logging.getLogger('tb')
-LOGGER.setLevel(logging.INFO)
+requested_level = environ.get('XCTCMSG_LOG_LEVEL', 'INFO')
+requested_level = logging.getLevelNamesMapping().get(requested_level, logging.INFO)
+LOGGER.setLevel(requested_level)
 
 type PseudoSignalMapping = Mapping[str, PseudoSignalMapping | str]
 

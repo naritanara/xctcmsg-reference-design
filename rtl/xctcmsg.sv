@@ -1,10 +1,8 @@
 import xctcmsg_pkg::*;
+// import xctcmsg_cfg_pkg::network_bus, xctcmsg_cfg_pkg::network_openpiton;
+import xctcmsg_piton_pkg::*;
 
-// Needed for adapter interfaces to be visible
-`ifndef VERILATOR
-`include "bus_adapter.sv"
-`include "openpiton_adapter.sv"
-`endif
+`include "xctcmsg_networks.svh"
 
 module xctcmsg #(
     parameter MAX_HARTID = 64,
@@ -27,7 +25,7 @@ module xctcmsg #(
     input exe_stage_passthrough_t rr_xctcmsg_passthrough,
 
     // Network interface
-    `NETWORK_INTERFACE,
+    `XCTCMSG_NETWORK_INTERFACE,
 
     // WB-stage
     output logic xctcmsg_wb_valid,
@@ -136,8 +134,15 @@ module xctcmsg #(
     commit_safety_unit commit_safety_unit (.*);
 
     loopback_interceptor loopback_interceptor (.*);
-    `NETWORK_ADAPTER network_adapter (.*);
-
+    `XCTCMSG_NETWORK_ADAPTER network_adapter (.*);
+    // FIXME: Use code below with a proper interface
+    // generate
+    //   case (xctcmsg_pkg::NETWORK)
+    //     network_bus: bus_adapter network_adapter (.*);
+    //     network_openpiton: openpiton_adapter network_adapter (.*);
+    //   endcase
+    // endgenerate
+    
     writeback_arbiter writeback_arbiter (.*);
 
 
