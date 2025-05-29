@@ -682,6 +682,7 @@ class AbstractTB(AbstractAsyncContextManager):
     logger: Logger
     tasks: MutableMapping[str, TBTask]
     clock: AbstractClock
+    _dut: SimHandleBase
 
     def __init__(
         self,
@@ -701,6 +702,8 @@ class AbstractTB(AbstractAsyncContextManager):
 
         for id, task in tasks.items():
             self.add_task(id, task)
+        
+        self._dut = dut
     
     def __recursively_fullfill_needs_clock(self, task: TBTask):
         if isinstance(task, NeedsClock):
@@ -716,6 +719,10 @@ class AbstractTB(AbstractAsyncContextManager):
         setattr(self, id, task)
         
         self.__recursively_fullfill_needs_clock(task)
+
+    @property
+    def dut(self):
+        return self._dut.dut
 
     @override
     async def __aenter__(self) -> Self:

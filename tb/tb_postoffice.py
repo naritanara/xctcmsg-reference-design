@@ -89,11 +89,11 @@ async def flush_test(dut):
             
             await RisingEdges(20)
             
-            assert dut.writeback_valid.value == 1
+            assert tb.dut.writeback_valid.value == 1
             
             await flush()
             
-            assert dut.writeback_valid.value == 0
+            assert tb.dut.writeback_valid.value == 0
         
         await RisingEdges(20)
         
@@ -123,7 +123,7 @@ async def writeback_storage(dut):
     
             await RisingEdges(20)
     
-            assert dut.writeback_valid.value == 1
+            assert tb.dut.writeback_valid.value == 1
 
         writeback = await tb.get_writeback()
         assert writeback == expected_writebacks[0]

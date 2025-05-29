@@ -1,12 +1,6 @@
 package xctcmsg_pkg;
 
-import xctcmsg_cfg_pkg::*;
-
-parameter type exe_stage_passthrough_t = xctcmsg_core_cfg::exe_stage_passthrough_t;
-parameter type commit_safety_request_payload_t = xctcmsg_core_cfg::commit_safety_request_payload_t;
-parameter type commit_safety_control_unit_state_t = xctcmsg_core_cfg::commit_safety_control_unit_state_t;
-
-parameter network_t NETWORK = xctcmsg_network_cfg::NETWORK;
+`include "xctcmsg_config/core.svh"
 
 typedef struct packed {
   logic [2:0] funct3;
@@ -21,17 +15,14 @@ typedef enum logic [2:0] {
   REQUEST_TYPE_AVAIL = 3'b010
 } request_type_t;
 
-`define MESSAGE_ADDR_WIDTH 32
-`define MESSAGE_ADDR_MASK  (`MESSAGE_ADDR_WIDTH-1):0
-typedef logic [`MESSAGE_ADDR_MASK] message_addr_t;
+parameter MESSAGE_ADDR_WIDTH = 32;
+typedef logic [MESSAGE_ADDR_WIDTH-1:0] message_addr_t;
 
-`define MESSAGE_TAG_WIDTH 32
-`define MESSAGE_TAG_MASK  (`MESSAGE_TAG_WIDTH-1):0
-typedef logic [`MESSAGE_TAG_MASK] message_tag_t;
+parameter MESSAGE_TAG_WIDTH = 32;
+typedef logic [MESSAGE_TAG_WIDTH-1:0] message_tag_t;
 
-`define MESSAGE_DATA_WIDTH 64
-`define MESSAGE_DATA_MASK  (`MESSAGE_DATA_WIDTH-1):0
-typedef logic [`MESSAGE_DATA_MASK] message_data_t;
+parameter MESSAGE_DATA_WIDTH = 64;
+typedef logic [MESSAGE_DATA_WIDTH-1:0] message_data_t;
 
 typedef struct packed {
   message_tag_t tag;

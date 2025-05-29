@@ -8,7 +8,7 @@ import xctcmsg_pkg::*;
   // From openpiton's "define.tmp.h" and "network_define.v", for unit tests
   `define NOC_X_WIDTH 8
   `define NOC_Y_WIDTH 8
-  
+
   `define MSG_LENGTH_WIDTH 8
   `define MSG_DST_FBITS_WIDTH 4
   `define MSG_DST_Y_WIDTH `NOC_X_WIDTH
@@ -22,7 +22,7 @@ import xctcmsg_pkg::*;
 
   `define XCTCMSG_MSG_PAYLOAD_WIDTH 128
   `define XCTCMSG_MSG_PAYLOAD_LENGTH (`XCTCMSG_MSG_PAYLOAD_WIDTH / 64)
-  
+
   // This defines should only be used when the openpiton network is not in use
   `ifndef PITON_X_TILES
     `define PITON_X_TILES 1

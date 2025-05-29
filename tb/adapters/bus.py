@@ -12,7 +12,7 @@ from xctcmsg_pkg import InterfaceReceiveData, InterfaceSendData, Message
 
 class BusInterfaceDriver(ValRdyNetworkInterfaceDriver[Message, Message]):
     def __init__(self, dut: SimHandleBase):
-        send_interface_pseudo = PseudoSignal(dut,
+        send_interface_pseudo = PseudoSignal(dut.network_interface,
             {
                 'meta': {
                     'tag': 'bus_tag_o',
@@ -21,7 +21,7 @@ class BusInterfaceDriver(ValRdyNetworkInterfaceDriver[Message, Message]):
                 'data': 'bus_msg_o',
             }
         )
-        recv_interface_pseudo = PseudoSignal(dut,
+        recv_interface_pseudo = PseudoSignal(dut.network_interface,
             {
                 'meta': {
                     'tag': 'bus_tag_i',
@@ -32,15 +32,15 @@ class BusInterfaceDriver(ValRdyNetworkInterfaceDriver[Message, Message]):
         )
         
         send_interface = ValRdyInterface(
-            val=dut.bus_val_o,
-            rdy=dut.bus_ack_i,
+            val=dut.network_interface.bus_val_o,
+            rdy=dut.network_interface.bus_ack_i,
             rdy_is_ack=True,
             data=send_interface_pseudo,
             consumer_name="C2C Network",
         )
         recv_interface = ValRdyInterface(
-            val=dut.bus_val_i,
-            rdy=dut.bus_rdy_o,
+            val=dut.network_interface.bus_val_i,
+            rdy=dut.network_interface.bus_rdy_o,
             data=recv_interface_pseudo,
             producer_name="C2C Network",
         )

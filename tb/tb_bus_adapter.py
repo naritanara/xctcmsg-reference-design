@@ -12,7 +12,7 @@ class BusAdapterTB(AbstractAdapterTB[BusInterfaceDriver]):
 
 @cocotb.test
 async def reset_state(dut):
-    async with BusAdapterTB(dut):
-        assert dut.holding_valid.value == 0
+    async with BusAdapterTB(dut) as tb:
+        assert tb.dut.holding_valid.value == 0
 
 BusAdapterTB.test_factory().generate_tests()

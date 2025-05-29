@@ -214,13 +214,13 @@ async def flush_test(dut):
 
         await RisingEdges(2 * MESSAGE_BUFFER_SIZE)
 
-        assert dut.mbox.request_valid.value == 1
-        assert dut.mbox.message_valid.value.binstr == '1' * MESSAGE_BUFFER_SIZE
+        assert tb.dut.mbox.request_valid.value == 1
+        assert tb.dut.mbox.message_valid.value.binstr == '1' * MESSAGE_BUFFER_SIZE
 
         await flush()
 
-        assert dut.mbox.request_valid.value == 0
-        assert dut.mbox.message_valid.value.binstr == '1' * MESSAGE_BUFFER_SIZE
+        assert tb.dut.mbox.request_valid.value == 0
+        assert tb.dut.mbox.message_valid.value.binstr == '1' * MESSAGE_BUFFER_SIZE
 
         # Cleanup messages left on buffers
         await tb.request(*([RequestData.quick(RequestType.RECV, 0, -1, 0)] * MESSAGE_BUFFER_SIZE))
@@ -233,11 +233,11 @@ async def flush_test(dut):
     
             await RisingEdges(20)
     
-            assert dut.postoffice.writeback_valid.value == 1
+            assert tb.dut.postoffice.writeback_valid.value == 1
     
             await flush()
     
-            assert dut.postoffice.writeback_valid.value == 0
+            assert tb.dut.postoffice.writeback_valid.value == 0
 
         await RisingEdges(20)
         assert tb.wb_stage_queue_state == QueueState.EMPTY
@@ -253,13 +253,13 @@ async def flush_test(dut):
     
             await RisingEdges(20)
     
-            assert dut.send_queue.empty.value == 0
-            assert dut.receive_queue.empty.value == 0
+            assert tb.dut.send_queue.empty.value == 0
+            assert tb.dut.receive_queue.empty.value == 0
     
             await flush()
     
-            assert dut.send_queue.empty.value == 1
-            assert dut.receive_queue.empty.value == 1
+            assert tb.dut.send_queue.empty.value == 1
+            assert tb.dut.receive_queue.empty.value == 1
 
         await RisingEdges(20)
         assert tb.wb_stage_queue_state == QueueState.EMPTY

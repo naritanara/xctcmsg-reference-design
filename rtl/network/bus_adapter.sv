@@ -1,7 +1,5 @@
 import xctcmsg_pkg::*;
 
-`include "xctcmsg_networks/bus.svh"
-
 module bus_adapter (
   input  logic clk,
   input  logic rst_n,
@@ -16,7 +14,8 @@ module bus_adapter (
   input  logic loopback_interface_ready,
   output interface_receive_data_t interface_loopback_data,
 
-  `XCTCMSG_NETWORK_BUS_INTERFACE
+  // Bus interface
+  bus_interface.FU network_interface
 );
 
   // Registers to hold the message until accepted by the bus
@@ -44,7 +43,7 @@ module bus_adapter (
   end
 
   always_comb begin : holding_requests
-    holding_deallocate_valid = bus_ack_i;
+    holding_deallocate_valid = network_interface.bus_ack_i;
     holding_allocate_valid = loopback_interface_valid & interface_loopback_ready;
   end
 
@@ -53,22 +52,22 @@ module bus_adapter (
   end
 
   always_comb begin : bus_send
-    bus_val_o = holding_valid;
-    bus_dst_o = holding_data.message.meta.address;
-    bus_tag_o = holding_data.message.meta.tag;
-    bus_msg_o = holding_data.message.data;
+    network_interface.bus_val_o = holding_valid;
+    network_interface.bus_dst_o = holding_data.message.meta.address;
+    network_interface.bus_tag_o = holding_data.message.meta.tag;
+    network_interface.bus_msg_o = holding_data.message.data;
   end
 
   // Message reception
   always_comb begin : bus_receive
-    interface_loopback_valid = bus_val_i;
-    interface_loopback_data.message.meta.address = bus_src_i;
-    interface_loopback_data.message.meta.tag = bus_tag_i;
-    interface_loopback_data.message.data = bus_msg_i;
+    interface_loopback_valid = network_interface.bus_val_i;
+    interface_loopback_data.message.meta.address = network_interface.bus_src_i;
+    interface_loopback_data.message.meta.tag = network_interface.bus_tag_i;
+    interface_loopback_data.message.data = network_interface.bus_msg_i;
   end
 
   always_comb begin : bus_receive_protocol
-    bus_rdy_o = loopback_interface_ready;
+    network_interface.bus_rdy_o = loopback_interface_ready;
   end
 
 endmodule

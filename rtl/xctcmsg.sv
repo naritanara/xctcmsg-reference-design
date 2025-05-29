@@ -1,8 +1,6 @@
 import xctcmsg_pkg::*;
-// import xctcmsg_cfg_pkg::network_bus, xctcmsg_cfg_pkg::network_openpiton;
-import xctcmsg_piton_pkg::*;
 
-`include "xctcmsg_networks.svh"
+`include "xctcmsg_config/network.svh"
 
 module xctcmsg #(
     parameter MAX_HARTID = 64,
@@ -25,7 +23,7 @@ module xctcmsg #(
     input exe_stage_passthrough_t rr_xctcmsg_passthrough,
 
     // Network interface
-    `XCTCMSG_NETWORK_INTERFACE,
+    `XCTCMSG_NETWORK_INTERFACE.FU network_interface,
 
     // WB-stage
     output logic xctcmsg_wb_valid,
@@ -135,14 +133,7 @@ module xctcmsg #(
 
     loopback_interceptor loopback_interceptor (.*);
     `XCTCMSG_NETWORK_ADAPTER network_adapter (.*);
-    // FIXME: Use code below with a proper interface
-    // generate
-    //   case (xctcmsg_pkg::NETWORK)
-    //     network_bus: bus_adapter network_adapter (.*);
-    //     network_openpiton: openpiton_adapter network_adapter (.*);
-    //   endcase
-    // endgenerate
-    
+
     writeback_arbiter writeback_arbiter (.*);
 
 

@@ -64,9 +64,9 @@ class MBoxTB(AbstractTB):
 
 @cocotb.test
 async def reset_state(dut):
-    async with MBoxTB(dut):
-        assert dut.message_valid.value == 0
-        assert dut.request_valid.value == 0
+    async with MBoxTB(dut) as tb:
+        assert tb.dut.message_valid.value == 0
+        assert tb.dut.request_valid.value == 0
 
 @cocotb.test
 async def flush_test(dut):
@@ -79,15 +79,15 @@ async def flush_test(dut):
 
         await RisingEdges(2 + MESSAGE_BUFFER_SIZE)
 
-        assert dut.request_valid.value == 1
-        assert dut.message_valid.value.binstr == '1' * MESSAGE_BUFFER_SIZE
+        assert tb.dut.request_valid.value == 1
+        assert tb.dut.message_valid.value.binstr == '1' * MESSAGE_BUFFER_SIZE
 
         await flush()
 
-        assert dut.request_valid.value == 0
-        assert dut.message_valid.value.binstr == '1' * MESSAGE_BUFFER_SIZE
+        assert tb.dut.request_valid.value == 0
+        assert tb.dut.message_valid.value.binstr == '1' * MESSAGE_BUFFER_SIZE
 
-        assert dut.mailbox_receive_queue_ready == '1'
+        assert tb.dut.mailbox_receive_queue_ready == '1'
 
 @cocotb.test
 async def message_storage(dut):
@@ -107,16 +107,16 @@ async def message_storage(dut):
             
             await RisingEdges(20)
     
-            buffered_messages = list(Message.from_array_signal(dut.message_data))
+            buffered_messages = list(Message.from_array_signal(tb.dut.message_data))
             
-            assert dut.message_valid.value.binstr == '1' * MESSAGE_BUFFER_SIZE
+            assert tb.dut.message_valid.value.binstr == '1' * MESSAGE_BUFFER_SIZE
             assert buffered_messages == messages[:-1]
     
-            assert dut.mailbox_loopback_ready.value == 0
+            assert tb.dut.mailbox_loopback_ready.value == 0
             assert tb.receive_queue_state != QueueState.EMPTY
             
             # Invalidate every message to absorb the stalled one
-            dut.message_valid.value = 0
+            tb.dut.message_valid.value = 0
             await RisingEdge()
 
 @cocotb.test
@@ -132,14 +132,14 @@ async def request_storage(dut):
     
             await RisingEdges(20)
     
-            assert dut.request_valid.value == 1
-            buffered_request_data = ReceiveQueueData.from_signal(dut.request_data)
+            assert tb.dut.request_valid.value == 1
+            buffered_request_data = ReceiveQueueData.from_signal(tb.dut.request_data)
             assert buffered_request_data == requests[0]
     
-            assert dut.mailbox_receive_queue_ready.value == 0
+            assert tb.dut.mailbox_receive_queue_ready.value == 0
             
             # Invalidate the request to absorb the stalled one
-            dut.request_valid.value = 0
+            tb.dut.request_valid.value = 0
             await RisingEdges(2)
 
 @cocotb.test

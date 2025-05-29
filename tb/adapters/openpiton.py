@@ -10,22 +10,22 @@ from xctcmsg_pkg import Message, OpenpitonData
 
 class OpenpitonInterfaceDriver(ValRdyNetworkInterfaceDriver[OpenpitonData, OpenpitonData]):
     def __init__(self, dut: SimHandleBase):
-        send_interface_pseudo = PseudoSignal(dut, {
+        send_interface_pseudo = PseudoSignal(dut.network_interface, {
             'raw': 'noc_out_data',
         })
-        recv_interface_pseudo = PseudoSignal(dut, {
+        recv_interface_pseudo = PseudoSignal(dut.network_interface, {
             'raw': 'noc_in_data',
         })
         
         send_interface = ValRdyInterface(
-            val=dut.noc_out_val,
-            rdy=dut.noc_out_rdy,
+            val=dut.network_interface.noc_out_val,
+            rdy=dut.network_interface.noc_out_rdy,
             data=send_interface_pseudo,
             consumer_name="Xctcmsg NoC",
         )
         recv_interface = ValRdyInterface(
-            val=dut.noc_in_val,
-            rdy=dut.noc_in_rdy,
+            val=dut.network_interface.noc_in_val,
+            rdy=dut.network_interface.noc_in_rdy,
             data=recv_interface_pseudo,
             producer_name="Xctcmsg NoC",
         )
