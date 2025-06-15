@@ -2,7 +2,7 @@ package xctcmsg_piton_pkg;
 
 import xctcmsg_pkg::*;
 
-`ifdef PITON
+`ifdef PITON_RV64_XCTCMSG
   `include "define.tmp.h"
 `else
   // From openpiton's "define.tmp.h" and "network_define.v", for unit tests
@@ -11,8 +11,8 @@ import xctcmsg_pkg::*;
 
   `define MSG_LENGTH_WIDTH 8
   `define MSG_DST_FBITS_WIDTH 4
-  `define MSG_DST_Y_WIDTH `NOC_X_WIDTH
-  `define MSG_DST_X_WIDTH `NOC_Y_WIDTH
+  `define MSG_DST_Y_WIDTH `NOC_Y_WIDTH
+  `define MSG_DST_X_WIDTH `NOC_X_WIDTH
   `define MSG_DST_CHIPID_WIDTH 14
 
   `define PITON_XCTCMSG_NOC_WIDTH 192

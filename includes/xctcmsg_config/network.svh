@@ -1,5 +1,5 @@
-`ifndef XCTCMSG_CONFIG_NETWORK
-`define XCTCMSG_CONFIG_NETWORK
+`ifndef XCTCMSG_CONFIG__NETWORK_SVH
+`define XCTCMSG_CONFIG__NETWORK_SVH
 
 // Network configuration -> Parameters corresponding to the network that
 //                          connects all cores.
@@ -13,4 +13,4 @@
   `error "Missing or unrecognized `XCTCMSG_NETWORK_* define"
 `endif
 
-`endif // XCTCMSG_CONFIG__NETWORK
+`endif // XCTCMSG_CONFIG__NETWORK_SVH
